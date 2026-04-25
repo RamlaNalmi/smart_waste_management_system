@@ -1,68 +1,34 @@
 const mongoose = require('mongoose');
 
+
 const binSchema = new mongoose.Schema({
-  binId: {
+  device_id: { type: String, required: true },
+
+  distance: Number,
+  fill_percentage: Number,
+  fill_status: {
     type: String,
-    required: true,
-    unique: true
+    enum: ["LOW", "MEDIUM", "HIGH"]
   },
-  location: {
-    latitude: {
-      type: Number,
-      required: true
-    },
-    longitude: {
-      type: Number,
-      required: true
-    },
-    address: String
-  },
-  capacity: {
-    type: Number,
-    required: true,
-    min: 0,
-    max: 100
-  },
-  fillLevel: {
-    type: Number,
-    required: true,
-    min: 0,
-    max: 100,
-    default: 0
-  },
-  status: {
-    type: String,
-    enum: ['active', 'maintenance', 'offline'],
-    default: 'active'
-  },
-  lastEmptied: {
+
+  gas: Number,
+  gas_alert: Boolean,
+
+  angleX: Number,
+  angleY: Number,
+  fall_detected: Boolean,
+
+  timestamp: { type: Date },   // FIXED
+  topic: String,
+
+  received_at: {
     type: Date,
     default: Date.now
-  },
-  sensorData: [{
-    timestamp: {
-      type: Date,
-      default: Date.now
-    },
-    fillLevel: Number,
-    temperature: Number,
-    humidity: Number
-  }],
-  alerts: [{
-    type: {
-      type: String,
-      enum: ['full', 'maintenance', 'offline']
-    },
-    message: String,
-    timestamp: {
-      type: Date,
-      default: Date.now
-    },
-    resolved: {
-      type: Boolean,
-      default: false
-    }
-  }]
+  }
+
+}, {
+  strict: true   // FIXED
 });
 
-module.exports = mongoose.model('Bin', binSchema);
+module.exports = mongoose.model("sensor_data", binSchema);
+

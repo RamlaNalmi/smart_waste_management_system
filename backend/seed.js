@@ -21,6 +21,7 @@ const seedBins = async () => {
           address: 'Downtown Street, Area A'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 85,
         status: 'active',
         lastEmptied: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
@@ -41,6 +42,7 @@ const seedBins = async () => {
           address: 'Main Street, Area B'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 92,
         status: 'active',
         lastEmptied: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
@@ -69,6 +71,7 @@ const seedBins = async () => {
           address: 'Park Avenue, Area C'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 45,
         status: 'active',
         lastEmptied: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
@@ -89,6 +92,7 @@ const seedBins = async () => {
           address: 'Market Square, Area D'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 88,
         status: 'active',
         lastEmptied: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000),
@@ -117,6 +121,7 @@ const seedBins = async () => {
           address: 'Central Park, Area E'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 65,
         status: 'active',
         lastEmptied: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
@@ -137,6 +142,7 @@ const seedBins = async () => {
           address: 'Harbor Road, Area F'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 20,
         status: 'active',
         lastEmptied: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
@@ -157,6 +163,7 @@ const seedBins = async () => {
           address: 'Industrial Zone, Area G'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 100,
         status: 'offline',
         lastEmptied: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
@@ -184,6 +191,7 @@ const seedBins = async () => {
           address: 'Residential Area, Area H'
         },
         capacity: 100,
+        height: 120,
         fillLevel: 55,
         status: 'maintenance',
         lastEmptied: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),

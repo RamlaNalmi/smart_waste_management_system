@@ -7,7 +7,6 @@ import BinOverview from './components/BinOverview';
 import Analytics from './components/Analytics';
 import Alerts from './components/Alerts';
 import MapView from './components/MapView';
-import MapPlaceholder from './components/MapPlaceholder';
 import Reports from './components/Reports';
 import Settings from './components/Settings';
 import UserManagement from './components/UserManagement';

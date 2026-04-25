@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, X, MessageCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { apiBaseUrl } from '../services/api';
 
 function ChatBot() {
   const [isOpen, setIsOpen] = useState(false);
@@ -30,7 +31,7 @@ function ChatBot() {
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(
-        `http://localhost:5000/api/chat/history/${sessionId}`,
+        `${apiBaseUrl}/chat/history/${sessionId}`,
         {
           headers: {
             'Authorization': `Bearer ${token}`
@@ -66,7 +67,7 @@ function ChatBot() {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5000/api/chat/message', {
+      const response = await fetch(`${apiBaseUrl}/chat/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -154,7 +155,7 @@ function ChatBot() {
                         : 'bg-white text-gray-800 border border-gray-200 rounded-bl-none'
                     }`}
                   >
-                    <p className="text-sm">{msg.message}</p>
+                    <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
                     <span className="text-xs opacity-70 mt-1 block">
                       {new Date(msg.timestamp).toLocaleTimeString([], {
                         hour: '2-digit',

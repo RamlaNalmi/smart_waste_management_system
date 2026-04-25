@@ -1,46 +1,48 @@
-import React from 'react';
-import { alertsData } from '../data/dummyData';
+import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import { acknowledgeAlert, fetchAlerts } from '../services/api';
 
 const RecentAlerts = ({ limit = null }) => {
-  const displayAlerts = limit ? alertsData.slice(0, limit) : alertsData;
+  const [alerts, setAlerts] = useState([]);
+  const [error, setError] = useState('');
 
-  const getAlertIcon = (type) => {
-    switch (type) {
-      case 'critical':
-        return <AlertTriangle className="w-4 h-4 text-critical" />;
-      case 'warning':
-        return <AlertTriangle className="w-4 h-4 text-warning" />;
-      default:
-        return <AlertTriangle className="w-4 h-4 text-grey" />;
+  const loadAlerts = async () => {
+    try {
+      setError('');
+      setAlerts(await fetchAlerts());
+    } catch (err) {
+      setError(err.message);
     }
   };
 
+  useEffect(() => {
+    loadAlerts();
+    const refreshTimer = setInterval(loadAlerts, 5000);
+    return () => clearInterval(refreshTimer);
+  }, []);
+
+  const displayAlerts = limit ? alerts.slice(0, limit) : alerts;
+
+  const getAlertIcon = (type) => (
+    <AlertTriangle className={`w-4 h-4 ${type === 'critical' ? 'text-critical' : type === 'warning' ? 'text-warning' : 'text-grey'}`} />
+  );
+
   const getAlertColor = (type) => {
-    switch (type) {
-      case 'critical':
-        return 'border-l-critical bg-red-50';
-      case 'warning':
-        return 'border-l-warning bg-yellow-50';
-      default:
-        return 'border-l-grey bg-gray-50';
-    }
+    if (type === 'critical') return 'border-l-critical bg-red-50';
+    if (type === 'warning') return 'border-l-warning bg-yellow-50';
+    return 'border-l-grey bg-gray-50';
   };
 
   const formatTimeAgo = (timestamp) => {
-    const alertTime = new Date(timestamp);
-    const now = new Date();
-    const diffInMinutes = Math.floor((now - alertTime) / (1000 * 60));
-    
-    if (diffInMinutes < 60) {
-      return `${diffInMinutes} minutes ago`;
-    } else if (diffInMinutes < 1440) {
-      const hours = Math.floor(diffInMinutes / 60);
-      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-    } else {
-      const days = Math.floor(diffInMinutes / 1440);
-      return `${days} day${days > 1 ? 's' : ''} ago`;
-    }
+    const diffInMinutes = Math.floor((new Date() - new Date(timestamp)) / (1000 * 60));
+    if (diffInMinutes < 60) return `${Math.max(diffInMinutes, 0)} minutes ago`;
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)} hours ago`;
+    return `${Math.floor(diffInMinutes / 1440)} days ago`;
+  };
+
+  const handleAcknowledge = async (alertId) => {
+    await acknowledgeAlert(alertId);
+    await loadAlerts();
   };
 
   return (
@@ -53,59 +55,44 @@ const RecentAlerts = ({ limit = null }) => {
         </div>
       </div>
 
+      {error && <div className="mb-3 text-sm text-red-700">{error}</div>}
+
       <div className="space-y-3">
         {displayAlerts.map((alert) => (
-          <div
-            key={alert.id}
-            className={`border-l-4 p-3 rounded-r-lg ${getAlertColor(alert.type)} ${
-              !alert.acknowledged ? 'opacity-100' : 'opacity-60'
-            }`}
-          >
+          <div key={alert.id} className={`border-l-4 p-3 rounded-r-lg ${getAlertColor(alert.type)} ${alert.acknowledged ? 'opacity-60' : 'opacity-100'}`}>
             <div className="flex items-start justify-between">
               <div className="flex items-start space-x-3">
                 {getAlertIcon(alert.type)}
                 <div className="flex-1">
                   <div className="flex items-center space-x-2 mb-1">
-                    <span className="text-sm font-medium text-dark-blue">
-                      {alert.binId}
-                    </span>
-                    {!alert.acknowledged && (
-                      <span className="w-2 h-2 bg-critical rounded-full animate-pulse"></span>
-                    )}
+                    <span className="text-sm font-medium text-dark-blue">{alert.device_id}</span>
+                    {!alert.acknowledged && <span className="w-2 h-2 bg-critical rounded-full animate-pulse"></span>}
                   </div>
                   <p className="text-sm text-grey mb-2">{alert.message}</p>
                   <p className="text-xs text-grey">{formatTimeAgo(alert.timestamp)}</p>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
-                {alert.acknowledged ? (
-                  <div className="flex items-center space-x-1 text-healthy">
-                    <CheckCircle className="w-4 h-4" />
-                    <span className="text-xs">Acknowledged</span>
-                  </div>
-                ) : (
-                  <button className="text-xs px-2 py-1 bg-steel-blue text-white rounded hover:bg-civic-blue transition-colors">
-                    Acknowledge
-                  </button>
-                )}
-              </div>
+              {alert.acknowledged ? (
+                <div className="flex items-center space-x-1 text-healthy">
+                  <CheckCircle className="w-4 h-4" />
+                  <span className="text-xs">Acknowledged</span>
+                </div>
+              ) : alert.derived ? (
+                <span className="text-xs text-grey">Live condition</span>
+              ) : (
+                <button onClick={() => handleAcknowledge(alert.id)} className="text-xs px-2 py-1 bg-steel-blue text-white rounded hover:bg-civic-blue transition-colors">
+                  Acknowledge
+                </button>
+              )}
             </div>
           </div>
         ))}
       </div>
 
-      {!limit && alertsData.length === 0 && (
+      {displayAlerts.length === 0 && (
         <div className="text-center py-8">
           <AlertTriangle className="w-12 h-12 text-grey mx-auto mb-3" />
           <p className="text-grey">No active alerts</p>
-        </div>
-      )}
-
-      {!limit && alertsData.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          <button className="text-sm text-steel-blue hover:text-civic-blue font-medium">
-            View All Alerts →
-          </button>
         </div>
       )}
     </div>

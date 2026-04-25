@@ -1,12 +1,12 @@
 # Smart Waste Management Backend
 
-Backend API for the Smart Waste Management System with Ollama AI Chatbot integration.
+Backend API for the Smart Waste Management System with Gemini AI Chatbot integration.
 
 ## Features
 
 - User authentication and authorization
-- Waste bin management with real-time sensor data
-- AI-powered chatbot using Ollama (local AI models)
+- Smart bin database readings from IoT sensor payloads
+- AI-powered chatbot using Gemini API
 - MongoDB database integration
 - RESTful API endpoints
 
@@ -22,8 +22,8 @@ Backend API for the Smart Waste Management System with Ollama AI Chatbot integra
    ```
    MONGODB_URI=mongodb+srv://your-username:your-password@cluster0.xxxxx.mongodb.net/smart-waste-db
    JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-   OLLAMA_BASE_URL=http://localhost:11434
-   OLLAMA_MODEL=llama2
+   GEMINI_API_KEY=your-gemini-api-key
+   GEMINI_MODEL=gemini-2.5-flash
    PORT=5000
    ```
 
@@ -31,11 +31,10 @@ Backend API for the Smart Waste Management System with Ollama AI Chatbot integra
    - Use MongoDB Atlas (cloud) or local MongoDB
    - Update the `MONGODB_URI` in `.env` with your connection string
 
-4. **Ollama Setup:**
-   - Install Ollama from https://ollama.ai/
-   - Pull a model: `ollama pull llama2` (or any other model you prefer)
-   - Make sure Ollama is running: `ollama serve`
-   - Update `OLLAMA_MODEL` in `.env` if using a different model
+4. **Gemini Setup:**
+   - Create a Gemini API key in Google AI Studio
+   - Put the key in `GEMINI_API_KEY`
+   - Update `GEMINI_MODEL` in `.env` if using a different Gemini model
 
 ## Running the Server
 
@@ -59,12 +58,9 @@ The server will run on `http://localhost:5000` by default.
 - `GET /api/auth/me` - Get current user info
 
 ### Bins
-- `GET /api/bins` - Get all bins
-- `GET /api/bins/:id` - Get bin by ID
-- `POST /api/bins` - Create new bin
-- `PUT /api/bins/:id` - Update bin
-- `DELETE /api/bins/:id` - Delete bin
-- `POST /api/bins/:id/sensor` - Update bin sensor data
+- `GET /api/bins` - Get all database sensor readings
+- `GET /api/bins/bin-id/:deviceId` - Get latest reading by device ID
+- `GET /api/bins/:id` - Get reading by MongoDB ID
 
 ### Chat
 - `POST /api/chat/message` - Send message to AI chatbot
@@ -77,7 +73,7 @@ The server will run on `http://localhost:5000` by default.
 - username, email, password, role, createdAt
 
 ### Bin
-- binId, location, capacity, fillLevel, status, sensorData, alerts
+- device_id, distance, fill_percentage, fill_status, gas, gas_alert, fall_detected, timestamp, topic, received_at
 
 ### ChatMessage
 - userId, sessionId, message, role, timestamp, metadata
@@ -88,5 +84,5 @@ The server will run on `http://localhost:5000` by default.
 - Express.js
 - MongoDB with Mongoose
 - JWT for authentication
-- Ollama for local AI chatbot
+- Gemini API for AI chatbot
 - bcryptjs for password hashing

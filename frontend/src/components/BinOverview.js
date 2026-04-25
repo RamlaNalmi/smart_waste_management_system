@@ -1,222 +1,309 @@
-import React, { useState } from 'react';
-import { binData } from '../data/dummyData';
-import { Search, Filter, Download, Eye, EyeOff, Calendar, MapPin, TrendingUp, AlertTriangle, Package, Settings } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Download, Plus, Search, X } from 'lucide-react';
 import BinStatusTable from './BinStatusTable';
+import { createRegisteredBin, fetchBins, fetchNextDeviceId, fetchRegisteredBins } from '../services/api';
 
 const BinOverview = () => {
+  const [bins, setBins] = useState([]);
+  const [registeredBins, setRegisteredBins] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState({
-    status: 'all',
-    fillRange: 'all',
-    location: 'all'
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [newBin, setNewBin] = useState({
+    device_id: '',
+    height: '',
+    address: '',
+    latitude: '',
+    longitude: ''
   });
 
-  const filteredBins = binData.filter(bin => {
-    const matchesSearch = bin.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         bin.location.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = filters.status === 'all' || bin.status === filters.status;
-    
-    const matchesFill = filters.fillRange === 'all' || 
-                       (filters.fillRange === 'low' && bin.fillLevel < 40) ||
-                       (filters.fillRange === 'medium' && bin.fillLevel >= 40 && bin.fillLevel < 70) ||
-                       (filters.fillRange === 'high' && bin.fillLevel >= 70);
-    
-    const matchesLocation = filters.location === 'all' || 
-                           bin.location.toLowerCase().includes(filters.location.toLowerCase());
-    
-    return matchesSearch && matchesStatus && matchesFill && matchesLocation;
-  });
+  const loadBins = async (showLoading = false) => {
+    try {
+      if (showLoading) setLoading(true);
+      setError('');
+      const [readings, registrations] = await Promise.all([
+        fetchBins(),
+        fetchRegisteredBins()
+      ]);
+      setBins(readings);
+      setRegisteredBins(registrations);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBins(true);
+    const refreshTimer = setInterval(() => loadBins(false), 5000);
+    return () => clearInterval(refreshTimer);
+  }, []);
+
+  const openRegisterForm = async () => {
+    try {
+      setFormError('');
+      const nextDevice = await fetchNextDeviceId();
+      setNewBin((current) => ({ ...current, device_id: nextDevice.device_id }));
+      setShowRegisterForm(true);
+    } catch (err) {
+      setFormError(err.message);
+      setShowRegisterForm(true);
+    }
+  };
+
+  const filteredBins = useMemo(() => {
+    const query = searchTerm.toLowerCase();
+    return bins.filter((reading) =>
+      reading.device_id.toLowerCase().includes(query) ||
+      reading.fill_status.toLowerCase().includes(query) ||
+      reading.topic.toLowerCase().includes(query)
+    );
+  }, [bins, searchTerm]);
 
   const exportData = () => {
     const csvContent = [
-      ['Bin ID', 'Location', 'Fill Level', 'Weight (kg)', 'Odor Level', 'Temperature', 'Humidity', 'Status', 'Last Collection'],
-      ...filteredBins.map(bin => [
-        bin.id,
-        bin.location,
-        bin.fillLevel,
-        bin.weight,
-        bin.odorLevel,
-        bin.temperature,
-        bin.humidity,
-        bin.status,
-        bin.lastCollection
+      ['_id', 'device_id', 'distance', 'fill_percentage', 'fill_status', 'gas', 'gas_alert', 'angleX', 'angleY', 'fall_detected', 'timestamp', 'topic', 'received_at'],
+      ...filteredBins.map((reading) => [
+        reading.id,
+        reading.device_id,
+        reading.distance ?? '',
+        reading.fill_percentage,
+        reading.fill_status,
+        reading.gas ?? '',
+        reading.gas_alert,
+        reading.angleX ?? '',
+        reading.angleY ?? '',
+        reading.fall_detected,
+        reading.timestamp,
+        reading.topic,
+        reading.received_at
       ])
-    ].map(row => row.join(',')).join('\n');
+    ].map((row) => row.join(',')).join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.setAttribute('hidden', '');
     a.setAttribute('href', url);
-    a.setAttribute('download', 'bin_overview.csv');
+    a.setAttribute('download', 'smartbin_database_readings.csv');
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   };
 
+  const averageFill = filteredBins.length
+    ? Math.round(filteredBins.reduce((sum, reading) => sum + reading.fill_percentage, 0) / filteredBins.length)
+    : 0;
+
+  const registerBin = async (event) => {
+    event.preventDefault();
+
+    try {
+      setFormError('');
+      await createRegisteredBin({
+        height: Number(newBin.height),
+        location: {
+          address: newBin.address,
+          latitude: Number(newBin.latitude),
+          longitude: Number(newBin.longitude)
+        }
+      });
+
+      setNewBin({
+        device_id: '',
+        height: '',
+        address: '',
+        latitude: '',
+        longitude: ''
+      });
+      setShowRegisterForm(false);
+      await loadBins(false);
+    } catch (err) {
+      setFormError(err.message);
+    }
+  };
+
   return (
     <div className="p-6 space-y-6">
-      {/* Page Title */}
-      <div>
-        <h1 className="text-2xl font-bold text-dark-blue">Bin Overview</h1>
-        <p className="text-grey mt-1">Comprehensive view of all smart bins and their current status</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-dark-blue">Database Readings</h1>
+          <p className="text-grey mt-1">IoT readings plus a separate registered-bin table for height and map location</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={openRegisterForm}
+            className="flex items-center space-x-2 px-4 py-2 bg-steel-blue text-white rounded-lg hover:bg-civic-blue transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="text-sm">Add Bin</span>
+          </button>
+          <button
+            onClick={exportData}
+            className="flex items-center space-x-2 px-4 py-2 border border-gray-200 bg-white text-dark-blue rounded-lg hover:bg-light-grey transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            <span className="text-sm">Export</span>
+          </button>
+        </div>
       </div>
 
-      {/* Search and Filters */}
-      <div className="bg-white rounded-lg shadow-card p-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center space-x-4 flex-1">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-grey" />
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {loading && <div className="text-sm text-grey">Loading readings from database...</div>}
+
+      {showRegisterForm && (
+        <div className="bg-white rounded-lg shadow-card p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-semibold text-dark-blue">Add Registered Bin</h3>
+              <p className="text-sm text-grey">The device_id is generated automatically. Use it in the ESP32 payload for this bin.</p>
+            </div>
+            <button onClick={() => setShowRegisterForm(false)} className="text-grey hover:text-dark-blue">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {formError && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {formError}
+            </div>
+          )}
+
+          <form onSubmit={registerBin} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-dark-blue mb-2">Device ID</label>
+              <div className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-light-grey text-dark-blue font-mono">
+                {newBin.device_id || 'Generating...'}
+              </div>
+            </div>
+            <div className="md:col-span-4">
+              <label className="block text-sm font-medium text-dark-blue mb-2">Location Address</label>
               <input
-                type="text"
-                placeholder="Search by bin ID or location..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-steel-blue"
+                value={newBin.address}
+                onChange={(event) => setNewBin({ ...newBin, address: event.target.value })}
+                required
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
+                placeholder="Example: SLIIT Main Building"
               />
             </div>
-            
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center space-x-2 px-4 py-2 border border-gray-200 rounded-lg hover:bg-light-grey transition-colors"
-            >
-              <Filter className="w-4 h-4 text-dark-blue" />
-              <span className="text-sm text-dark-blue">Filters</span>
-              {(filters.status !== 'all' || filters.fillRange !== 'all' || filters.location !== 'all') && (
-                <span className="w-2 h-2 bg-steel-blue rounded-full"></span>
-              )}
-            </button>
+            <div>
+              <label className="block text-sm font-medium text-dark-blue mb-2">Height (cm)</label>
+              <input
+                type="number"
+                min="1"
+                value={newBin.height}
+                onChange={(event) => setNewBin({ ...newBin, height: event.target.value })}
+                required
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-dark-blue mb-2">Latitude</label>
+              <input
+                type="number"
+                step="any"
+                value={newBin.latitude}
+                onChange={(event) => setNewBin({ ...newBin, latitude: event.target.value })}
+                required
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-dark-blue mb-2">Longitude</label>
+              <input
+                type="number"
+                step="any"
+                value={newBin.longitude}
+                onChange={(event) => setNewBin({ ...newBin, longitude: event.target.value })}
+                required
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
+              />
+            </div>
+            <div className="flex items-end">
+              <button type="submit" className="w-full px-4 py-2 bg-steel-blue text-white rounded-lg hover:bg-civic-blue transition-colors">
+                Save Bin
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
-            <button
-              onClick={exportData}
-              className="flex items-center space-x-2 px-4 py-2 bg-steel-blue text-white rounded-lg hover:bg-civic-blue transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              <span className="text-sm">Export</span>
-            </button>
+      <div className="bg-white rounded-lg shadow-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-grey" />
+            <input
+              type="text"
+              placeholder="Search by device, fill status, or topic..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-steel-blue"
+            />
           </div>
 
           <div className="text-sm text-grey">
-            Showing {filteredBins.length} of {binData.length} bins
+            Showing {filteredBins.length} of {bins.length} readings
           </div>
         </div>
+      </div>
 
-        {/* Advanced Filters */}
-        {showFilters && (
-          <div className="mt-4 pt-4 border-t border-gray-200">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-dark-blue mb-2">Status</label>
-                <select
-                  value={filters.status}
-                  onChange={(e) => setFilters({...filters, status: e.target.value})}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
-                >
-                  <option value="all">All Status</option>
-                  <option value="normal">Normal</option>
-                  <option value="warning">Warning</option>
-                  <option value="critical">Critical</option>
-                </select>
-              </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <SummaryCard label="Total Readings" value={filteredBins.length} />
+        <SummaryCard label="Average Fill" value={`${averageFill}%`} />
+        <SummaryCard label="Gas Alerts" value={filteredBins.filter((reading) => reading.gas_alert).length} />
+        <SummaryCard label="Fall Detected" value={filteredBins.filter((reading) => reading.fall_detected).length} />
+      </div>
 
-              <div>
-                <label className="block text-sm font-medium text-dark-blue mb-2">Fill Level Range</label>
-                <select
-                  value={filters.fillRange}
-                  onChange={(e) => setFilters({...filters, fillRange: e.target.value})}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
-                >
-                  <option value="all">All Levels</option>
-                  <option value="low">Low (&lt;40%)</option>
-                  <option value="medium">Medium (40-70%)</option>
-                  <option value="high">High (&gt;70%)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-dark-blue mb-2">Location</label>
-                <input
-                  type="text"
-                  placeholder="Filter by location..."
-                  value={filters.location === 'all' ? '' : filters.location}
-                  onChange={(e) => setFilters({...filters, location: e.target.value || 'all'})}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
-                />
-              </div>
-            </div>
+      <div className="bg-white rounded-lg shadow-card p-4">
+        <h3 className="text-lg font-semibold text-dark-blue mb-4">Registered Bins</h3>
+        {registeredBins.length === 0 ? (
+          <p className="text-sm text-grey">No registered bins yet. Add a bin to place it on the map.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-2 text-sm font-medium text-dark-blue">Device ID</th>
+                  <th className="text-left py-3 px-2 text-sm font-medium text-dark-blue">Height</th>
+                  <th className="text-left py-3 px-2 text-sm font-medium text-dark-blue">Address</th>
+                  <th className="text-left py-3 px-2 text-sm font-medium text-dark-blue">Latitude</th>
+                  <th className="text-left py-3 px-2 text-sm font-medium text-dark-blue">Longitude</th>
+                </tr>
+              </thead>
+              <tbody>
+                {registeredBins.map((bin) => (
+                  <tr key={bin.id} className="border-b border-gray-200">
+                    <td className="py-3 px-2 text-sm font-medium text-dark-blue">{bin.device_id}</td>
+                    <td className="py-3 px-2 text-sm text-dark-blue">{bin.height} cm</td>
+                    <td className="py-3 px-2 text-sm text-grey">{bin.address}</td>
+                    <td className="py-3 px-2 text-sm text-dark-blue">{bin.latitude}</td>
+                    <td className="py-3 px-2 text-sm text-dark-blue">{bin.longitude}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow-card p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-grey">Total Bins</p>
-              <p className="text-2xl font-bold text-dark-blue">{filteredBins.length}</p>
-            </div>
-            <div className="w-12 h-12 bg-steel-blue rounded-lg flex items-center justify-center">
-              <Eye className="w-6 h-6 text-white" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-card p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-grey">Critical Bins</p>
-              <p className="text-2xl font-bold text-critical">
-                {filteredBins.filter(b => b.status === 'critical').length}
-              </p>
-            </div>
-            <div className="w-12 h-12 bg-critical rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold">!</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-card p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-grey">Avg Fill Level</p>
-              <p className="text-2xl font-bold text-dark-blue">
-                {filteredBins.length > 0 
-                  ? Math.round(filteredBins.reduce((sum, bin) => sum + bin.fillLevel, 0) / filteredBins.length)
-                  : 0}%
-              </p>
-            </div>
-            <div className="w-12 h-12 bg-healthy rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold">%</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-card p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-grey">Total Weight</p>
-              <p className="text-2xl font-bold text-dark-blue">
-                {filteredBins.reduce((sum, bin) => sum + bin.weight, 0).toFixed(1)} kg
-              </p>
-            </div>
-            <div className="w-12 h-12 bg-odor rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold">kg</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bin Status Table */}
-      <BinStatusTable 
-        limit={null} 
-        data={filteredBins} 
-      />
+      <BinStatusTable data={filteredBins} />
     </div>
   );
 };
+
+const SummaryCard = ({ label, value }) => (
+  <div className="bg-white rounded-lg shadow-card p-4">
+    <p className="text-sm text-grey">{label}</p>
+    <p className="text-2xl font-bold text-dark-blue">{value}</p>
+  </div>
+);
 
 export default BinOverview;

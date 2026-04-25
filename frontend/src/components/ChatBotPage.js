@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, MessageCircle, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { apiBaseUrl } from '../services/api';
 
 function ChatBotPage() {
   const [messages, setMessages] = useState([]);
@@ -36,7 +37,7 @@ function ChatBotPage() {
   const loadSessions = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5000/api/chat/sessions', {
+      const response = await fetch(`${apiBaseUrl}/chat/sessions`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -55,7 +56,7 @@ function ChatBotPage() {
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(
-        `http://localhost:5000/api/chat/history/${sId}`,
+        `${apiBaseUrl}/chat/history/${sId}`,
         {
           headers: {
             'Authorization': `Bearer ${token}`
@@ -92,7 +93,7 @@ function ChatBotPage() {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5000/api/chat/message', {
+      const response = await fetch(`${apiBaseUrl}/chat/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -221,7 +222,7 @@ function ChatBotPage() {
                       : 'bg-white text-gray-800 border border-gray-200 rounded-bl-none shadow-sm'
                   }`}
                 >
-                  <p className="text-base">{msg.message}</p>
+                  <p className="text-base whitespace-pre-wrap">{msg.message}</p>
                   <span className="text-xs opacity-70 mt-2 block">
                     {new Date(msg.timestamp).toLocaleTimeString([], {
                       hour: '2-digit',

@@ -18,10 +18,8 @@ const Settings = () => {
     warningAlertThreshold: 60,
     
     // Sensor Settings
-    fillLevelThreshold: 80,
-    odorThreshold: 7.0,
-    temperatureThreshold: 30.0,
-    humidityThreshold: 75,
+    fillPercentageThreshold: 70,
+    gasThreshold: 80,
     
     // Security Settings
     sessionTimeout: '60',
@@ -202,46 +200,22 @@ const Settings = () => {
         <h3 className="text-lg font-semibold text-dark-blue mb-4">Sensor Thresholds</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-dark-blue mb-2">Fill Level Threshold (%)</label>
+            <label className="block text-sm font-medium text-dark-blue mb-2">fill_percentage Threshold (%)</label>
             <input
               type="number"
-              value={settings.fillLevelThreshold}
-              onChange={(e) => handleSettingChange('sensors', 'fillLevelThreshold', e.target.value)}
+              value={settings.fillPercentageThreshold}
+              onChange={(e) => handleSettingChange('sensors', 'fillPercentageThreshold', e.target.value)}
               min="0"
               max="100"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-dark-blue mb-2">Odor Threshold (VOC)</label>
+            <label className="block text-sm font-medium text-dark-blue mb-2">gas Threshold</label>
             <input
               type="number"
-              value={settings.odorThreshold}
-              onChange={(e) => handleSettingChange('sensors', 'odorThreshold', e.target.value)}
-              min="0"
-              max="10"
-              step="0.1"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-dark-blue mb-2">Temperature Threshold (°C)</label>
-            <input
-              type="number"
-              value={settings.temperatureThreshold}
-              onChange={(e) => handleSettingChange('sensors', 'temperatureThreshold', e.target.value)}
-              min="0"
-              max="50"
-              step="0.1"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-dark-blue mb-2">Humidity Threshold (%)</label>
-            <input
-              type="number"
-              value={settings.humidityThreshold}
-              onChange={(e) => handleSettingChange('sensors', 'humidityThreshold', e.target.value)}
+              value={settings.gasThreshold}
+              onChange={(e) => handleSettingChange('sensors', 'gasThreshold', e.target.value)}
               min="0"
               max="100"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-steel-blue"
