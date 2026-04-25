@@ -11,6 +11,7 @@ import MapPlaceholder from './components/MapPlaceholder';
 import Reports from './components/Reports';
 import Settings from './components/Settings';
 import UserManagement from './components/UserManagement';
+import ChatSidebar from './components/ChatSidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './components/Login';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -19,6 +20,7 @@ import './index.css';
 function AppContent() {
   const [activeView, setActiveView] = useState('dashboard');
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const { user, canAccessRoute, isLoading } = useAuth();
 
   useEffect(() => {
@@ -124,11 +126,13 @@ function AppContent() {
               isDarkMode={isDarkMode} 
               setIsDarkMode={setIsDarkMode}
               user={user}
+              onChatToggle={() => setIsChatOpen(!isChatOpen)}
             />
             <main className="flex-1 overflow-x-hidden overflow-y-auto bg-light-grey">
               {renderContent()}
             </main>
           </div>
+          <ChatSidebar isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
         </div>
       ) : (
         <Login />

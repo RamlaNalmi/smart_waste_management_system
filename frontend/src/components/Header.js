@@ -1,8 +1,8 @@
 import React from 'react';
-import { Bell, User, Moon, Sun, LogOut } from 'lucide-react';
+import { Bell, User, Moon, Sun, LogOut, MessageCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-const Header = ({ isDarkMode, setIsDarkMode, user }) => {
+const Header = ({ isDarkMode, setIsDarkMode, user, onChatToggle }) => {
   const { logout } = useAuth();
 
   const handleLogout = () => {
@@ -22,6 +22,16 @@ const Header = ({ isDarkMode, setIsDarkMode, user }) => {
         </div>
 
         <div className="flex items-center space-x-4">
+          {/* Chat with AI Button */}
+          <button
+            onClick={onChatToggle}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-civic-blue text-white hover:bg-steel-blue transition-colors"
+            title="Chat with AI"
+          >
+            <MessageCircle size={18} />
+            <span className="text-sm font-medium">Chat</span>
+          </button>
+
           {/* Theme Toggle */}
           <button
             onClick={() => setIsDarkMode(!isDarkMode)}

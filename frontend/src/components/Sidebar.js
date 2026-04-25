@@ -7,7 +7,7 @@ import {
   MapPin, 
   FileText, 
   Settings, 
-  Users 
+  Users
 } from 'lucide-react';
 
 const menuItems = [
