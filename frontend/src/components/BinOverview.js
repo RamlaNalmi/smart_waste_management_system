@@ -65,11 +65,12 @@ const BinOverview = () => {
 
   const exportData = () => {
     const csvContent = [
-      ['_id', 'device_id', 'distance', 'fill_percentage', 'fill_status', 'gas', 'gas_alert', 'angleX', 'angleY', 'fall_detected', 'timestamp', 'topic', 'received_at'],
+      ['_id', 'device_id', 'distance', 'bin_weight', 'fill_percentage', 'fill_status', 'gas', 'gas_alert', 'angleX', 'angleY', 'fall_detected', 'timestamp', 'topic', 'received_at'],
       ...filteredBins.map((reading) => [
         reading.id,
         reading.device_id,
         reading.distance ?? '',
+        reading.bin_weight ?? '',
         reading.fill_percentage,
         reading.fill_status,
         reading.gas ?? '',

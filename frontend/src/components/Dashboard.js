@@ -1,12 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Database, Gauge, Wind } from 'lucide-react';
+import { AlertTriangle, Gauge, Scale, Trash2, Wind } from 'lucide-react';
 import BinStatusTable from './BinStatusTable';
 import RecentAlerts from './RecentAlerts';
 import { useAuth } from '../contexts/AuthContext';
-import { fetchBins } from '../services/api';
+import { fetchBins, fetchRegisteredBins } from '../services/api';
 
-const KPICard = ({ title, value, icon: Icon, color, unit = '' }) => (
-  <div className="bg-white rounded-lg shadow-card p-6 hover:shadow-lg transition-shadow">
+const KPICard = ({ title, value, icon: Icon, color, unit = '', onClick, active = false }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`w-full text-left bg-white rounded-lg shadow-card p-6 hover:shadow-lg transition-shadow ${
+      onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-steel-blue' : 'cursor-default'
+    } ${active ? 'ring-2 ring-steel-blue' : ''}`}
+  >
     <div className="flex items-center justify-between">
       <div>
         <p className="text-sm text-grey font-medium">{title}</p>
@@ -18,12 +24,13 @@ const KPICard = ({ title, value, icon: Icon, color, unit = '' }) => (
         <Icon className="w-6 h-6 text-white" />
       </div>
     </div>
-  </div>
+  </button>
 );
 
 const Dashboard = () => {
   const { user } = useAuth();
   const [bins, setBins] = useState([]);
+  const [readingFilter, setReadingFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -31,7 +38,16 @@ const Dashboard = () => {
     try {
       if (showLoading) setLoading(true);
       setError('');
-      setBins(await fetchBins());
+      const [readings, registrations] = await Promise.all([
+        fetchBins(),
+        fetchRegisteredBins()
+      ]);
+      const registrationByDevice = new Map(registrations.map((bin) => [bin.device_id, bin]));
+
+      setBins(readings.map((reading) => ({
+        ...reading,
+        location: reading.location || registrationByDevice.get(reading.device_id)?.address || ''
+      })));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -46,21 +62,55 @@ const Dashboard = () => {
   }, []);
 
   const metrics = useMemo(() => {
-    const total = bins.length;
-    const averageFill = total
-      ? Math.round(bins.reduce((sum, reading) => sum + reading.fill_percentage, 0) / total)
-      : 0;
+    const weightReadings = bins.filter((reading) => reading.bin_weight !== null);
 
     return {
-      total,
-      averageFill,
-      gasAlerts: bins.filter((reading) => reading.gas_alert).length,
+      highFill: bins.filter((reading) => reading.fill_status === 'HIGH').length,
+      mediumFill: bins.filter((reading) => reading.fill_status === 'MEDIUM').length,
+      lowFill: bins.filter((reading) => reading.fill_status === 'LOW').length,
       fallDetected: bins.filter((reading) => reading.fall_detected).length,
-      normal: bins.filter((reading) => reading.uiStatus === 'normal').length,
-      warning: bins.filter((reading) => reading.uiStatus === 'warning').length,
-      critical: bins.filter((reading) => reading.uiStatus === 'critical').length
+      gasDetected: bins.filter((reading) => reading.gas_alert).length,
+      averageWeight: weightReadings.length
+        ? Number((weightReadings.reduce((sum, reading) => sum + reading.bin_weight, 0) / weightReadings.length).toFixed(1))
+        : 0
     };
   }, [bins]);
+
+  const filteredBins = useMemo(() => {
+    if (readingFilter === 'high') {
+      return bins.filter((reading) => reading.fill_status === 'HIGH');
+    }
+
+    if (readingFilter === 'medium') {
+      return bins.filter((reading) => reading.fill_status === 'MEDIUM');
+    }
+
+    if (readingFilter === 'low') {
+      return bins.filter((reading) => reading.fill_status === 'LOW');
+    }
+
+    if (readingFilter === 'fall') {
+      return bins.filter((reading) => reading.fall_detected);
+    }
+
+    if (readingFilter === 'gas') {
+      return bins.filter((reading) => reading.gas_alert);
+    }
+
+    return bins;
+  }, [bins, readingFilter]);
+
+  const filterLabels = {
+    high: 'Showing bins with high fill level',
+    medium: 'Showing bins with medium fill level',
+    low: 'Showing bins with low fill level',
+    fall: 'Showing bins with fall detected',
+    gas: 'Showing bins with gas detected'
+  };
+
+  const toggleFilter = (filter) => {
+    setReadingFilter((current) => (current === filter ? 'all' : filter));
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -81,62 +131,79 @@ const Dashboard = () => {
 
       {loading && <div className="text-sm text-grey">Loading database readings...</div>}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KPICard title="Database Readings" value={metrics.total} icon={Database} color="bg-steel-blue" />
-        <KPICard title="Average Fill" value={metrics.averageFill} icon={Gauge} color="bg-healthy" unit="%" />
-        <KPICard title="Gas Alerts" value={metrics.gasAlerts} icon={Wind} color="bg-warning" />
-        <KPICard title="Fall Detected" value={metrics.fallDetected} icon={AlertTriangle} color="bg-critical" />
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
+        <KPICard
+          title="Fill Level High"
+          value={metrics.highFill}
+          icon={Trash2}
+          color="bg-critical"
+          active={readingFilter === 'high'}
+          onClick={() => toggleFilter('high')}
+        />
+        <KPICard
+          title="Fill Level Medium"
+          value={metrics.mediumFill}
+          icon={Gauge}
+          color="bg-warning"
+          active={readingFilter === 'medium'}
+          onClick={() => toggleFilter('medium')}
+        />
+        <KPICard
+          title="Fill Level Low"
+          value={metrics.lowFill}
+          icon={Gauge}
+          color="bg-healthy"
+          active={readingFilter === 'low'}
+          onClick={() => toggleFilter('low')}
+        />
+        <KPICard
+          title="Fall Detected"
+          value={metrics.fallDetected}
+          icon={AlertTriangle}
+          color="bg-critical"
+          active={readingFilter === 'fall'}
+          onClick={() => toggleFilter('fall')}
+        />
+        <KPICard
+          title="Gas Detected"
+          value={metrics.gasDetected}
+          icon={Wind}
+          color="bg-warning"
+          active={readingFilter === 'gas'}
+          onClick={() => toggleFilter('gas')}
+        />
+        <KPICard
+          title="Average Weight"
+          value={metrics.averageWeight}
+          unit=" kg"
+          icon={Scale}
+          color="bg-steel-blue"
+        />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white rounded-lg shadow-card p-6">
-          <h3 className="text-lg font-semibold text-dark-blue mb-4">Condition Level</h3>
-          <div className="space-y-3">
-            <StatusRow label="Normal" value={metrics.normal} color="bg-healthy" />
-            <StatusRow label="Warning" value={metrics.warning} color="bg-warning" />
-            <StatusRow label="Critical" value={metrics.critical} color="bg-critical" />
+      <div>
+        {readingFilter !== 'all' && (
+          <div className="mb-3 flex items-center justify-between rounded-lg border border-red-100 bg-red-50 px-4 py-3">
+            <span className="text-sm font-medium text-red-700">
+              {filterLabels[readingFilter]}
+            </span>
+            <button
+              type="button"
+              onClick={() => setReadingFilter('all')}
+              className="text-sm font-medium text-steel-blue hover:text-civic-blue"
+            >
+              Show all
+            </button>
           </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-card p-6 lg:col-span-2">
-          <h3 className="text-lg font-semibold text-dark-blue mb-4">Latest Database Fields</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <FieldName name="device_id" />
-            <FieldName name="distance" />
-            <FieldName name="fill_percentage" />
-            <FieldName name="fill_status" />
-            <FieldName name="gas" />
-            <FieldName name="gas_alert" />
-            <FieldName name="fall_detected" />
-            <FieldName name="timestamp" />
-            <FieldName name="topic" />
-            <FieldName name="received_at" />
-          </div>
-        </div>
+        )}
+        <BinStatusTable limit={readingFilter === 'all' ? 5 : null} data={filteredBins} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <BinStatusTable limit={5} data={bins} />
-        {user?.role !== 'guest' && <RecentAlerts limit={5} />}
+      <div>
+        {user?.role !== 'guest' && <RecentAlerts limit={4} />}
       </div>
     </div>
   );
 };
-
-const StatusRow = ({ label, value, color }) => (
-  <div className="flex items-center justify-between">
-    <div className="flex items-center space-x-2">
-      <div className={`w-3 h-3 ${color} rounded-full`} />
-      <span className="text-sm text-grey">{label}</span>
-    </div>
-    <span className="text-sm font-medium text-dark-blue">{value}</span>
-  </div>
-);
-
-const FieldName = ({ name }) => (
-  <div className="rounded-lg bg-light-grey px-3 py-2 font-mono text-dark-blue">
-    {name}
-  </div>
-);
 
 export default Dashboard;

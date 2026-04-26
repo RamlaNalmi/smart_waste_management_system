@@ -9,12 +9,15 @@ const getUiStatus = (reading) => {
 export const normalizeBin = (reading) => {
   const fillPercentage = Number(reading.fill_percentage) || 0;
   const gas = reading.gas === undefined || reading.gas === null ? null : Number(reading.gas);
+  const binWeight = reading.bin_weight === undefined || reading.bin_weight === null ? null : Number(reading.bin_weight);
 
   return {
     ...reading,
     id: reading._id,
     device_id: reading.device_id || '',
+    location: reading.location?.address || reading.location || reading.address || '',
     distance: reading.distance ?? null,
+    bin_weight: Number.isFinite(binWeight) ? binWeight : null,
     fill_percentage: fillPercentage,
     fill_status: reading.fill_status || 'UNKNOWN',
     gas,
@@ -41,16 +44,17 @@ export const fetchBins = async () => {
   return bins.map(normalizeBin);
 };
 
+export const createBinUpdatesSource = () => new EventSource(`${API_BASE_URL}/bins/events`);
+
 export const fetchBinHistory = async (deviceId = null, options = {}) => {
   const { limit = 1000, range = 'day', date } = typeof options === 'number' ? { limit: options } : options;
   const params = new URLSearchParams({
     limit: String(limit),
-    range
+    view: range
   });
+  if (deviceId) params.set('device_id', deviceId);
   if (date) params.set('date', date);
-  const path = deviceId
-    ? `${API_BASE_URL}/bins/history/${encodeURIComponent(deviceId)}?${params.toString()}`
-    : `${API_BASE_URL}/bins/history?${params.toString()}`;
+  const path = `${API_BASE_URL}/bin/history?${params.toString()}`;
   const response = await fetch(path);
   if (!response.ok) throw new Error('Unable to load historical readings');
   const bins = await response.json();
@@ -63,6 +67,36 @@ export const fetchFillForecast = async (deviceId, hoursAhead = 7) => {
     const error = await response.json().catch(() => ({}));
     throw new Error(error.message || 'Unable to load predicted fill data');
   }
+  return response.json();
+};
+
+export const fetchFillPredictionSeries = async (points) => {
+  const response = await fetch(`${API_BASE_URL}/predictions/fill-level/series`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ points })
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || 'Unable to load predicted fill data');
+  }
+
+  return response.json();
+};
+
+export const fetchFillPrediction = async (payload) => {
+  const response = await fetch(`${API_BASE_URL}/predict-fill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || 'Unable to load predicted fill data');
+  }
+
   return response.json();
 };
 

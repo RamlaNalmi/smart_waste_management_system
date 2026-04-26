@@ -76,9 +76,14 @@ const Alerts = () => {
     return `${Math.floor(diffInMinutes / 1440)} days ago`;
   };
 
-  const criticalCount = alerts.filter(a => a.type === 'critical' && !a.acknowledged).length;
-  const warningCount = alerts.filter(a => a.type === 'warning' && !a.acknowledged).length;
+  const criticalCount = alerts.filter(a => a.type === 'critical').length;
+  const warningCount = alerts.filter(a => a.type === 'warning').length;
   const unacknowledgedCount = alerts.filter(a => !a.acknowledged).length;
+
+  const applySummaryFilter = (type, status) => {
+    setFilterType(type);
+    setFilterStatus(status);
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -97,10 +102,38 @@ const Alerts = () => {
       {loading && <div className="text-sm text-grey">Loading alerts from database...</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <SummaryCard label="Total Alerts" value={alerts.length} color="bg-steel-blue" icon={<Bell className="w-6 h-6 text-white" />} />
-        <SummaryCard label="Critical" value={criticalCount} color="bg-critical" icon={<AlertTriangle className="w-6 h-6 text-white" />} />
-        <SummaryCard label="Warning" value={warningCount} color="bg-warning" icon={<AlertTriangle className="w-6 h-6 text-white" />} />
-        <SummaryCard label="Unacknowledged" value={unacknowledgedCount} color="bg-odor" icon={<Clock className="w-6 h-6 text-white" />} />
+        <SummaryCard
+          label="Total Alerts"
+          value={alerts.length}
+          color="bg-steel-blue"
+          icon={<Bell className="w-6 h-6 text-white" />}
+          active={filterType === 'all' && filterStatus === 'all'}
+          onClick={() => applySummaryFilter('all', 'all')}
+        />
+        <SummaryCard
+          label="Critical"
+          value={criticalCount}
+          color="bg-critical"
+          icon={<AlertTriangle className="w-6 h-6 text-white" />}
+          active={filterType === 'critical' && filterStatus === 'all'}
+          onClick={() => applySummaryFilter('critical', 'all')}
+        />
+        <SummaryCard
+          label="Warning"
+          value={warningCount}
+          color="bg-warning"
+          icon={<AlertTriangle className="w-6 h-6 text-white" />}
+          active={filterType === 'warning' && filterStatus === 'all'}
+          onClick={() => applySummaryFilter('warning', 'all')}
+        />
+        <SummaryCard
+          label="Unacknowledged"
+          value={unacknowledgedCount}
+          color="bg-odor"
+          icon={<Clock className="w-6 h-6 text-white" />}
+          active={filterType === 'all' && filterStatus === 'unacknowledged'}
+          onClick={() => applySummaryFilter('all', 'unacknowledged')}
+        />
       </div>
 
       <div className="bg-white rounded-lg shadow-card p-4">
@@ -191,8 +224,15 @@ const Alerts = () => {
   );
 };
 
-const SummaryCard = ({ label, value, color, icon }) => (
-  <div className="bg-white rounded-lg shadow-card p-4">
+const SummaryCard = ({ label, value, color, icon, active, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-pressed={active}
+    className={`w-full bg-white rounded-lg shadow-card p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-steel-blue ${
+      active ? 'ring-2 ring-steel-blue' : ''
+    }`}
+  >
     <div className="flex items-center justify-between">
       <div>
         <p className="text-sm text-grey">{label}</p>
@@ -202,7 +242,7 @@ const SummaryCard = ({ label, value, color, icon }) => (
         {icon}
       </div>
     </div>
-  </div>
+  </button>
 );
 
 export default Alerts;

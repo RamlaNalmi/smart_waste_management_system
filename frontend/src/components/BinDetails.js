@@ -41,6 +41,7 @@ const BinDetails = ({ bin, onClose }) => {
             <DetailRow label="Mongo ID" value={bin.id} />
             <DetailRow label="Device ID" value={bin.device_id} />
             <DetailRow label="Distance" value={bin.distance} />
+            <DetailRow label="Bin Weight" value={bin.bin_weight === null ? '-' : `${bin.bin_weight} kg`} />
             <DetailRow label="Fill Percentage" value={`${bin.fill_percentage}%`} />
             <DetailRow label="Fill Status" value={bin.fill_status} />
             <DetailRow label="Gas" value={bin.gas} />

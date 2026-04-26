@@ -76,12 +76,12 @@ const BinStatusTable = ({ limit = null, data = null }) => {
             <tr className="border-b border-gray-200">
               {[
                 ['device_id', 'Device ID'],
+                ['location', 'Location'],
                 ['distance', 'Distance'],
+                ['bin_weight', 'Weight'],
                 ['fill_percentage', 'Fill %'],
                 ['fill_status', 'Fill Status'],
                 ['gas', 'Gas'],
-                ['angleX', 'Angle X'],
-                ['angleY', 'Angle Y'],
                 ['received_at', 'Received At'],
                 ['uiStatus', 'Alert Level']
               ].map(([key, label]) => (
@@ -105,7 +105,13 @@ const BinStatusTable = ({ limit = null, data = null }) => {
                 className="border-b border-gray-200 hover:bg-light-grey cursor-pointer transition-colors"
               >
                 <td className="py-3 px-2 text-sm font-medium text-dark-blue">{reading.device_id}</td>
+                <td className="py-3 px-2 text-sm text-dark-blue max-w-[220px] truncate" title={reading.location || '-'}>
+                  {reading.location || '-'}
+                </td>
                 <td className="py-3 px-2 text-sm text-dark-blue">{reading.distance ?? '-'}</td>
+                <td className="py-3 px-2 text-sm text-dark-blue">
+                  {reading.bin_weight === null ? '-' : `${reading.bin_weight} kg`}
+                </td>
                 <td className="py-3 px-2">
                   <div className="flex items-center space-x-2">
                     <div className="w-16 bg-gray-200 rounded-full h-2">
@@ -122,8 +128,6 @@ const BinStatusTable = ({ limit = null, data = null }) => {
                 </td>
                 <td className="py-3 px-2 text-sm text-dark-blue">{reading.fill_status}</td>
                 <td className="py-3 px-2 text-sm text-dark-blue">{reading.gas ?? '-'}</td>
-                <td className="py-3 px-2 text-sm text-dark-blue">{reading.angleX ?? '-'}</td>
-                <td className="py-3 px-2 text-sm text-dark-blue">{reading.angleY ?? '-'}</td>
                 <td className="py-3 px-2 text-sm text-grey">
                   {reading.received_at ? new Date(reading.received_at).toLocaleString() : '-'}
                 </td>
@@ -134,6 +138,13 @@ const BinStatusTable = ({ limit = null, data = null }) => {
                 </td>
               </tr>
             ))}
+            {displayData.length === 0 && (
+              <tr>
+                <td colSpan={9} className="py-8 text-center text-sm text-grey">
+                  No database readings match this view.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

@@ -19,6 +19,8 @@ const toSensorTimestampString = (date) => {
   ].join(':');
 };
 
+const toIsoTimestampString = (date) => date.toISOString();
+
 const parseDateParam = (value) => {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date();
   const [year, month, day] = value.split('-').map(Number);
@@ -39,15 +41,16 @@ const endOfDay = (date) => {
 
 const getHistoryRangeBounds = (range, anchorDate = new Date()) => {
   const anchor = new Date(anchorDate);
+  const normalizedRange = String(range || 'day').toLowerCase();
 
-  if (range === 'day') {
+  if (normalizedRange === 'day') {
     return {
       since: startOfDay(anchor),
       until: endOfDay(anchor)
     };
   }
 
-  if (range === 'week') {
+  if (normalizedRange === 'week') {
     const start = startOfDay(anchor);
     const mondayOffset = (start.getDay() + 6) % 7;
     start.setDate(start.getDate() - mondayOffset);
@@ -58,7 +61,7 @@ const getHistoryRangeBounds = (range, anchorDate = new Date()) => {
     return { since: start, until: end };
   }
 
-  if (range === 'month') {
+  if (normalizedRange === 'month') {
     const start = startOfDay(new Date(anchor.getFullYear(), anchor.getMonth(), 1));
     const end = endOfDay(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0));
 
@@ -74,13 +77,55 @@ const getHistoryRangeBounds = (range, anchorDate = new Date()) => {
 const getHistoryDateMatch = (range, anchorDate = new Date()) => {
   const { since, until } = getHistoryRangeBounds(range, anchorDate);
 
+  const dateRangeMatches = (field) => ({
+    $or: [
+      {
+        [field]: {
+          $gte: since,
+          $lte: until
+        }
+      },
+      {
+        [field]: {
+          $gte: toIsoTimestampString(since),
+          $lte: toIsoTimestampString(until)
+        }
+      },
+      {
+        [field]: {
+          $gte: toSensorTimestampString(since),
+          $lte: toSensorTimestampString(until)
+        }
+      }
+    ]
+  });
+
   return {
-    timestamp: {
-      $gte: toSensorTimestampString(since),
-      $lte: toSensorTimestampString(until)
-    }
+    $or: [
+      dateRangeMatches('timestamp'),
+      dateRangeMatches('received_at'),
+      dateRangeMatches('createdAt'),
+      dateRangeMatches('updatedAt')
+    ]
   };
 };
+
+const getSortDateExpression = () => ({
+  $ifNull: [
+    { $convert: { input: '$received_at', to: 'date', onError: null, onNull: null } },
+    {
+      $ifNull: [
+        { $convert: { input: '$timestamp', to: 'date', onError: null, onNull: null } },
+        {
+          $ifNull: [
+            { $convert: { input: '$updatedAt', to: 'date', onError: null, onNull: null } },
+            { $convert: { input: '$createdAt', to: 'date', onError: null, onNull: null } }
+          ]
+        }
+      ]
+    }
+  ]
+});
 
 const combineMatches = (...matches) => ({
   $and: matches.filter((match) => Object.keys(match).length > 0)
@@ -91,6 +136,55 @@ router.get('/debug/source', async (req, res) => {
     res.json(await getSensorCollectionDebug(mongoose.connection));
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+});
+
+router.get('/events', async (req, res) => {
+  res.set({
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'Content-Type': 'text/event-stream'
+  });
+  res.flushHeaders?.();
+  res.write(': connected\n\n');
+
+  let changeStream;
+  const keepAlive = setInterval(() => {
+    res.write(': keep-alive\n\n');
+  }, 30000);
+
+  const close = async () => {
+    clearInterval(keepAlive);
+    if (changeStream) {
+      await changeStream.close().catch(() => {});
+    }
+    res.end();
+  };
+
+  req.on('close', close);
+
+  try {
+    const collection = await getSensorCollection(mongoose.connection);
+    changeStream = collection.watch([], { fullDocument: 'updateLookup' });
+
+    changeStream.on('change', (change) => {
+      const document = change.fullDocument || change.documentKey || {};
+      const payload = {
+        operationType: change.operationType,
+        device_id: document.device_id || document.binId || document.bin_id || null,
+        documentId: change.documentKey?._id || document._id || null
+      };
+
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    });
+
+    changeStream.on('error', (error) => {
+      res.write(`event: error\ndata: ${JSON.stringify({ message: error.message })}\n\n`);
+      close();
+    });
+  } catch (error) {
+    res.write(`event: error\ndata: ${JSON.stringify({ message: error.message })}\n\n`);
+    close();
   }
 });
 
@@ -139,10 +233,13 @@ router.get('/history/:deviceId', async (req, res) => {
       ]
     };
     const anchorDate = parseDateParam(req.query.date);
-    const readings = await collection.find(combineMatches(deviceMatch, getHistoryDateMatch(req.query.range, anchorDate)))
-      .sort({ timestamp: -1, _id: -1 })
-      .limit(limit)
-      .toArray();
+    const range = req.query.range || req.query.view;
+    const readings = await collection.aggregate([
+      { $match: combineMatches(deviceMatch, getHistoryDateMatch(range, anchorDate)) },
+      { $addFields: { sortDate: getSortDateExpression() } },
+      { $sort: { sortDate: -1, _id: -1 } },
+      { $limit: limit }
+    ]).toArray();
 
     res.json(readings.reverse().map(normalizeBinRecord));
   } catch (error) {
@@ -154,17 +251,23 @@ router.get('/history', async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit || 1000), 1), 5000);
     const collection = await getSensorCollection(mongoose.connection);
-    const deviceMatch = {
-      $or: [
-        { device_id: { $exists: true, $nin: [null, ''] } },
-        { binId: { $exists: true, $nin: [null, ''] } }
-      ]
-    };
+    const deviceId = req.query.device_id || req.query.deviceId;
+    const deviceMatch = deviceId
+      ? { $or: [{ device_id: deviceId }, { binId: deviceId }] }
+      : {
+          $or: [
+            { device_id: { $exists: true, $nin: [null, ''] } },
+            { binId: { $exists: true, $nin: [null, ''] } }
+          ]
+        };
     const anchorDate = parseDateParam(req.query.date);
-    const readings = await collection.find(combineMatches(deviceMatch, getHistoryDateMatch(req.query.range, anchorDate)))
-      .sort({ timestamp: -1, _id: -1 })
-      .limit(limit)
-      .toArray();
+    const range = req.query.range || req.query.view;
+    const readings = await collection.aggregate([
+      { $match: combineMatches(deviceMatch, getHistoryDateMatch(range, anchorDate)) },
+      { $addFields: { sortDate: getSortDateExpression() } },
+      { $sort: { sortDate: -1, _id: -1 } },
+      { $limit: limit }
+    ]).toArray();
 
     res.json(readings.reverse().map(normalizeBinRecord));
   } catch (error) {

@@ -40,6 +40,7 @@ const Reports = () => {
         '_id',
         'device_id',
         'distance',
+        'bin_weight',
         'fill_percentage',
         'fill_status',
         'gas',
@@ -106,7 +107,7 @@ const Reports = () => {
       <div className="bg-white rounded-lg shadow-card p-6">
         <h2 className="text-lg font-semibold text-dark-blue mb-4">Database Field Coverage</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {['_id', 'device_id', 'distance', 'fill_percentage', 'fill_status', 'gas', 'gas_alert', 'angleX', 'angleY', 'fall_detected', 'timestamp', 'topic', 'received_at'].map((field) => (
+          {['_id', 'device_id', 'distance', 'bin_weight', 'fill_percentage', 'fill_status', 'gas', 'gas_alert', 'angleX', 'angleY', 'fall_detected', 'timestamp', 'topic', 'received_at'].map((field) => (
             <div key={field} className="rounded-lg bg-light-grey px-3 py-2 font-mono text-sm text-dark-blue">
               {field}
             </div>

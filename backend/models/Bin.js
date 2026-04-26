@@ -5,6 +5,7 @@ const binSchema = new mongoose.Schema({
   device_id: { type: String, required: true },
 
   distance: Number,
+  bin_weight: Number,
   fill_percentage: Number,
   fill_status: {
     type: String,
@@ -31,4 +32,3 @@ const binSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model("sensor_data", binSchema);
-

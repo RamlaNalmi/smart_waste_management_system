@@ -24,10 +24,12 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/smart-was
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/bins', require('./routes/bins'));
+app.use('/api/bin', require('./routes/bins'));
 app.use('/api/bin-registrations', require('./routes/binRegistrations'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/predictions', require('./routes/predictions'));
+app.use('/api', require('./routes/predictions'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

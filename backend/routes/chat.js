@@ -54,6 +54,9 @@ const getSystemData = async () => {
   ]).toArray()).map(normalizeBinRecord);
   const alerts = readings.flatMap(buildConditionAlerts);
   const fillValues = readings.map((reading) => Number(reading.fill_percentage) || 0);
+  const weightValues = readings
+    .map((reading) => Number(reading.bin_weight))
+    .filter(Number.isFinite);
 
   return {
     readings,
@@ -63,6 +66,7 @@ const getSystemData = async () => {
       averageFill: readings.length ? round(fillValues.reduce((sum, value) => sum + value, 0) / readings.length) : 0,
       maxFill: readings.length ? Math.max(...fillValues) : 0,
       minFill: readings.length ? Math.min(...fillValues) : 0,
+      averageWeight: weightValues.length ? round(weightValues.reduce((sum, value) => sum + value, 0) / weightValues.length) : 0,
       gasAlerts: readings.filter((reading) => reading.gas_alert).length,
       fallDetected: readings.filter((reading) => reading.fall_detected).length
     }
@@ -70,7 +74,7 @@ const getSystemData = async () => {
 };
 
 const formatReadingLine = (reading) =>
-  `${reading.device_id}: distance ${reading.distance ?? 'missing'}, fill ${reading.fill_percentage}%, fill_status ${reading.fill_status || 'missing'}, gas ${reading.gas ?? 'missing'}, gas_alert ${reading.gas_alert}, fall_detected ${reading.fall_detected}, topic ${reading.topic || 'missing'}, timestamp ${reading.timestamp || 'missing'}, received_at ${reading.received_at || 'missing'}`;
+  `${reading.device_id}: distance ${reading.distance ?? 'missing'}, bin_weight ${reading.bin_weight ?? 'missing'}, fill ${reading.fill_percentage}%, fill_status ${reading.fill_status || 'missing'}, gas ${reading.gas ?? 'missing'}, gas_alert ${reading.gas_alert}, fall_detected ${reading.fall_detected}, topic ${reading.topic || 'missing'}, timestamp ${reading.timestamp || 'missing'}, received_at ${reading.received_at || 'missing'}`;
 
 const buildDataContext = ({ readings, alerts, metrics }) => [
   'CURRENT DATABASE SNAPSHOT',
@@ -78,6 +82,7 @@ const buildDataContext = ({ readings, alerts, metrics }) => [
   `Average fill_percentage: ${metrics.averageFill}%`,
   `Highest fill_percentage: ${metrics.maxFill}%`,
   `Lowest fill_percentage: ${metrics.minFill}%`,
+  `Average bin_weight: ${metrics.averageWeight} kg`,
   `Gas alert count: ${metrics.gasAlerts}`,
   `Fall detected count: ${metrics.fallDetected}`,
   '',
@@ -113,6 +118,13 @@ const buildFallbackAnswer = (message, systemData) => {
       `Highest fill_percentage is ${metrics.maxFill}%.`,
       `Lowest fill_percentage is ${metrics.minFill}%.`,
       ...readings.map((reading) => `- ${reading.device_id}: ${reading.fill_percentage}% (${reading.fill_status || 'missing fill_status'})`)
+    ].join('\n');
+  }
+
+  if (lowerMessage.includes('weight')) {
+    return [
+      `Average bin_weight is ${metrics.averageWeight} kg.`,
+      ...readings.map((reading) => `- ${reading.device_id}: ${reading.bin_weight ?? 'missing'} kg`)
     ].join('\n');
   }
 
@@ -191,7 +203,7 @@ router.post('/message', auth, async (req, res) => {
 
     const prompt = `You are a Smart Waste Management database assistant.
 Answer using only the MongoDB fields shown below.
-Do not mention locations, height, weight, temperature, humidity, collection routes, sensor uptime, or ML predictions because those fields are not in the database snapshot.
+Do not mention locations, height, temperature, humidity, collection routes, sensor uptime, or ML predictions because those fields are not in the database snapshot.
 If the user asks for missing data, say that the database does not contain that field.
 
 ${dataContext}

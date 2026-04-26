@@ -10,6 +10,12 @@ const getFillPercentage = (reading) => Math.max(
   Math.min(100, Math.round(toNumber(reading.fill_percentage)))
 );
 
+const getBinWeight = (reading) => {
+  const value = reading.bin_weight ?? reading.weight ?? reading.binWeight;
+  if (value === undefined || value === null || value === '') return null;
+  return toNumber(value, null);
+};
+
 const getReceivedAt = (reading) => reading.received_at || reading.timestamp || reading.updatedAt || reading.createdAt || new Date();
 
 const normalizeBinRecord = (reading) => {
@@ -48,6 +54,7 @@ const normalizeBinRecord = (reading) => {
   }
 
   record.gas = reading.gas === undefined ? null : toNumber(reading.gas);
+  record.bin_weight = getBinWeight(reading);
   record.gas_alert = Boolean(reading.gas_alert);
   record.angleX = reading.angleX === undefined ? null : toNumber(reading.angleX);
   record.angleY = reading.angleY === undefined ? null : toNumber(reading.angleY);
@@ -72,6 +79,7 @@ const makeDerivedAlert = (reading, alertType, message) => ({
   timestamp: reading.received_at,
   acknowledged: false,
   fill_percentage: reading.fill_percentage,
+  bin_weight: reading.bin_weight,
   fill_status: reading.fill_status,
   gas: reading.gas,
   gas_alert: reading.gas_alert,
