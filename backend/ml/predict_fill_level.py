@@ -1,4 +1,5 @@
 import json
+import math
 import sys
 import warnings
 from pathlib import Path
@@ -44,7 +45,27 @@ def get_features(payload):
 
     features = {name: float(payload[name]) for name in NUMERIC_FEATURES}
     features["bin_id"] = payload.get("bin_id") or payload.get("device_id")
+    features["is_weekend"] = 1.0 if features["day_of_week"] >= 5 else 0.0
+    features["hour_sin"] = math.sin(2 * math.pi * features["hour"] / 24.0)
+    features["hour_cos"] = math.cos(2 * math.pi * features["hour"] / 24.0)
+    features["day_sin"] = math.sin(2 * math.pi * features["day_of_week"] / 7.0)
+    features["day_cos"] = math.cos(2 * math.pi * features["day_of_week"] / 7.0)
+    features["source"] = payload.get("source", "api")
     return features
+
+
+def ensure_model_columns(x_input, model_features):
+    for feature_name in model_features:
+        if feature_name in x_input.columns:
+            continue
+
+        # Keep string defaults for categorical-like columns.
+        if feature_name in ("source", "bin_id"):
+            x_input[feature_name] = "api" if feature_name == "source" else ""
+        else:
+            x_input[feature_name] = 0.0
+
+    return x_input[model_features]
 
 
 def format_result(raw_prediction, features):
@@ -68,7 +89,8 @@ def main():
         model = joblib.load(MODEL_PATH)
         model_features = list(joblib.load(FEATURE_COLUMNS_PATH))
         x_input = pd.DataFrame(feature_rows)
-        raw_predictions = model.predict(x_input[model_features])
+        x_input = ensure_model_columns(x_input, model_features)
+        raw_predictions = model.predict(x_input)
 
     results = [
         format_result(float(raw_prediction), features)

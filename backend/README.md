@@ -1,12 +1,12 @@
 # Smart Waste Management Backend
 
-Backend API for the Smart Waste Management System with Gemini AI Chatbot integration.
+Backend API for the Smart Waste Management System with local Ollama chatbot integration.
 
 ## Features
 
 - User authentication and authorization
 - Smart bin database readings from IoT sensor payloads
-- AI-powered chatbot using Gemini API
+- AI-powered chatbot using Ollama by default, with optional Gemini support
 - MongoDB database integration
 - RESTful API endpoints
 
@@ -22,8 +22,9 @@ Backend API for the Smart Waste Management System with Gemini AI Chatbot integra
    ```
    MONGODB_URI=mongodb+srv://your-username:your-password@cluster0.xxxxx.mongodb.net/smart-waste-db
    JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-   GEMINI_API_KEY=your-gemini-api-key
-   GEMINI_MODEL=gemini-2.5-flash
+   LLM_PROVIDER=ollama
+   OLLAMA_BASE_URL=http://localhost:11434
+   OLLAMA_MODEL=qwen2.5:3b
    PORT=5000
    ```
 
@@ -31,10 +32,11 @@ Backend API for the Smart Waste Management System with Gemini AI Chatbot integra
    - Use MongoDB Atlas (cloud) or local MongoDB
    - Update the `MONGODB_URI` in `.env` with your connection string
 
-4. **Gemini Setup:**
-   - Create a Gemini API key in Google AI Studio
-   - Put the key in `GEMINI_API_KEY`
-   - Update `GEMINI_MODEL` in `.env` if using a different Gemini model
+4. **Ollama Setup:**
+   - Install and run Ollama locally
+   - Confirm a model is pulled with `ollama list`
+   - Put the pulled model name in `OLLAMA_MODEL`
+   - To use Gemini instead, set `LLM_PROVIDER=gemini` and provide `GEMINI_API_KEY`
 
 ## Running the Server
 
@@ -84,5 +86,6 @@ The server will run on `http://localhost:5000` by default.
 - Express.js
 - MongoDB with Mongoose
 - JWT for authentication
-- Gemini API for AI chatbot
+- Ollama for local AI chatbot
+- Optional Gemini API fallback
 - bcryptjs for password hashing

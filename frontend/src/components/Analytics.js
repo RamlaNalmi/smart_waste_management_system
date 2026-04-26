@@ -9,6 +9,8 @@ const HISTORY_RANGES = [
   { value: 'month', label: 'Monthly' }
 ];
 
+const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
 const getTodayInputValue = () => {
   const today = new Date();
   const timezoneOffset = today.getTimezoneOffset() * 60000;
@@ -54,25 +56,79 @@ const getHourLabel = (hour) => {
   return `${displayHour} ${suffix}`;
 };
 
-const getChartLabel = (dateValue, range) => {
-  const date = dateValue instanceof Date ? dateValue : new Date(String(dateValue).replace(' ', 'T'));
+const formatTooltipDate = (timestamp, range) => {
+  const date = new Date(String(timestamp).replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return String(timestamp || '-');
 
   if (range === 'day') {
+    return date.toLocaleString([], {
+      weekday: 'long',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  return date.toLocaleDateString([], {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
+};
+
+const extractDateKey = (value) => {
+  if (!value) return '';
+  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
+};
+
+const parseDateKey = (dateKey) => {
+  const match = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return new Date(Number(year), Number(month) - 1, Number(day), 12, 0, 0, 0);
+};
+
+const toLocalTimestamp = (dateValue, hour = 12) => {
+  const date = dateValue instanceof Date ? new Date(dateValue) : new Date(String(dateValue).replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}T${String(hour).padStart(2, '0')}:00:00`;
+};
+
+const getChartLabel = (dateValue, range) => {
+  if (range === 'day') {
+    const date = dateValue instanceof Date ? dateValue : new Date(String(dateValue).replace(' ', 'T'));
+    if (Number.isNaN(date.getTime())) return '-';
     return getHourLabel(date.getHours());
   }
 
+  const dateKey = extractDateKey(dateValue);
+  const date = dateValue instanceof Date
+    ? dateValue
+    : (parseDateKey(dateKey) || new Date(String(dateValue).replace(' ', 'T')));
+  if (Number.isNaN(date.getTime())) return '-';
+
   if (range === 'week') {
-    return date.toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' });
+    return date.toLocaleDateString([], { weekday: 'long' });
   }
 
   if (range === 'month') {
-    return `${getOrdinalDay(date.getDate())} ${date.toLocaleDateString([], { month: 'short' })}`;
+    return getOrdinalDay(date.getDate());
   }
 
   return formatTimeLabel(date);
 };
 
 const getChartGroupKey = (reading, range) => {
+  const dateKey = extractDateKey(reading.timestamp || reading.received_at);
+  if (range !== 'day' && dateKey) return dateKey;
+
   const date = getReadingDate(reading);
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -87,6 +143,16 @@ const getChartGroupKey = (reading, range) => {
 
 const averageNullable = (total, count) => (count ? Number((total / count).toFixed(2)) : null);
 
+const getBucketTimestamp = (key, range, fallbackDate) => {
+  if (range === 'day') {
+    return fallbackDate.toISOString();
+  }
+
+  const parsed = parseDateKey(key);
+  if (parsed) return parsed.toISOString();
+  return fallbackDate.toISOString();
+};
+
 const groupHistoryForChart = (readings, range) => {
   const groups = new Map();
 
@@ -94,8 +160,9 @@ const groupHistoryForChart = (readings, range) => {
     const date = getReadingDate(reading);
     const key = getChartGroupKey(reading, range);
     const current = groups.get(key) || {
+      groupKey: key,
       label: getChartLabel(date, range),
-      timestamp: date.toISOString(),
+      timestamp: getBucketTimestamp(key, range, date),
       fillTotal: 0,
       fillCount: 0,
       weightTotal: 0,
@@ -125,6 +192,7 @@ const groupHistoryForChart = (readings, range) => {
   return Array.from(groups.values())
     .sort((first, second) => new Date(first.timestamp) - new Date(second.timestamp))
     .map((group) => ({
+      bucketKey: group.groupKey,
       label: group.label,
       timestamp: group.timestamp,
       actualFill: averageNullable(group.fillTotal, group.fillCount),
@@ -146,10 +214,7 @@ const getNextTimestamp = (lastTimestamp, view) => {
   return next;
 };
 
-const getLagFeatures = (historyData) => {
-  const values = historyData
-    .map((item) => item.fill_percentage)
-    .filter(Number.isFinite);
+const getLagFeatures = (values) => {
   const current = values.at(-1) ?? 50;
   const lag1 = values.at(-2) ?? current;
   const lag2 = values.at(-3) ?? lag1;
@@ -168,14 +233,117 @@ const getLagFeatures = (historyData) => {
 
 const getPredictionSteps = (view) => {
   if (view === 'day') return 6;
-  if (view === 'week') return 7;
-  return 15;
+  return 0;
+};
+
+const getDayStartDate = (selectedDate, fallbackTimestamp) => {
+  if (selectedDate) {
+    const parsed = new Date(`${selectedDate}T00:00:00`);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  if (fallbackTimestamp) {
+    const fallback = new Date(String(fallbackTimestamp).replace(' ', 'T'));
+    if (!Number.isNaN(fallback.getTime())) {
+      fallback.setHours(0, 0, 0, 0);
+      return fallback;
+    }
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
+};
+
+const getMonthStartDate = (selectedDate, fallbackTimestamp) => {
+  if (selectedDate) {
+    const parsed = new Date(`${selectedDate}T00:00:00`);
+    if (!Number.isNaN(parsed.getTime())) {
+      parsed.setDate(1);
+      parsed.setHours(0, 0, 0, 0);
+      return parsed;
+    }
+  }
+
+  if (fallbackTimestamp) {
+    const fallback = new Date(String(fallbackTimestamp).replace(' ', 'T'));
+    if (!Number.isNaN(fallback.getTime())) {
+      fallback.setDate(1);
+      fallback.setHours(0, 0, 0, 0);
+      return fallback;
+    }
+  }
+
+  const today = new Date();
+  today.setDate(1);
+  today.setHours(0, 0, 0, 0);
+  return today;
+};
+
+const getWeekStartDate = (selectedDate, fallbackTimestamp) => {
+  const parseCandidate = (value) => {
+    if (!value) return null;
+    const parsed = new Date(String(value).replace(' ', 'T'));
+    if (Number.isNaN(parsed.getTime())) return null;
+    parsed.setHours(0, 0, 0, 0);
+    return parsed;
+  };
+
+  const baseDate = parseCandidate(`${selectedDate || ''}T00:00:00`)
+    || parseCandidate(fallbackTimestamp)
+    || new Date();
+  const mondayOffset = (baseDate.getDay() + 6) % 7;
+  baseDate.setDate(baseDate.getDate() - mondayOffset);
+  baseDate.setHours(0, 0, 0, 0);
+  return baseDate;
+};
+
+const getHourBucketKey = (dateValue) => {
+  const date = dateValue instanceof Date ? dateValue : new Date(String(dateValue).replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return '';
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+    String(date.getHours()).padStart(2, '0')
+  ].join('-');
+};
+
+const getDayBucketKey = (dateValue) => {
+  const date = dateValue instanceof Date ? dateValue : new Date(String(dateValue).replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) return '';
+
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
+  ].join('-');
+};
+
+const getPredictionTimeFeatures = (timestamp) => {
+  const date = new Date(String(timestamp).replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) {
+    return {
+      hour: 0,
+      day_of_week: 0,
+      day_of_month: 1,
+      month: 1
+    };
+  }
+
+  return {
+    hour: date.getHours(),
+    day_of_week: (date.getDay() + 6) % 7,
+    day_of_month: date.getDate(),
+    month: date.getMonth() + 1
+  };
 };
 
 const Analytics = () => {
   const [bins, setBins] = useState([]);
   const [history, setHistory] = useState([]);
-  const [futurePredictions, setFuturePredictions] = useState([]);
+  const [predictedSeries, setPredictedSeries] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [historyRange, setHistoryRange] = useState('day');
   const [selectedDate, setSelectedDate] = useState(getTodayInputValue);
@@ -206,10 +374,27 @@ const Analytics = () => {
     }
   }, []);
 
+  const createPredictionPayload = useCallback((timestamp, seededFillValues = []) => {
+    const lagFeatures = getLagFeatures(seededFillValues);
+    return {
+      device_id: selectedDevice,
+      bin_id: selectedDevice,
+      timestamp,
+      fill_level: lagFeatures.fill_level,
+      fill_percentage: lagFeatures.fill_level,
+      lag_1: lagFeatures.lag_1,
+      lag_2: lagFeatures.lag_2,
+      lag_3: lagFeatures.lag_3,
+      rolling_mean_3: lagFeatures.rolling_mean_3,
+      fill_diff: lagFeatures.fill_diff,
+      ...getPredictionTimeFeatures(timestamp)
+    };
+  }, [selectedDevice]);
+
   const loadDeviceSeries = useCallback(async () => {
     if (!selectedDevice) {
       setHistory([]);
-      setFuturePredictions([]);
+      setPredictedSeries([]);
       setPredictionError('');
       return;
     }
@@ -262,7 +447,7 @@ const Analytics = () => {
 
   useEffect(() => {
     if (!history.length || !selectedDevice) {
-      setFuturePredictions([]);
+      setPredictedSeries([]);
       return;
     }
 
@@ -272,19 +457,166 @@ const Analytics = () => {
       try {
         setPredictionsLoading(true);
         setPredictionError('');
-        const lastActual = history[history.length - 1];
-        const lastTimestamp = lastActual.timestamp || lastActual.received_at;
-        const steps = getPredictionSteps(historyRange);
-        const predictionHistory = [...history];
+        const historicalPoints = groupHistoryForChart(history, historyRange);
+        if (!historicalPoints.length) {
+          if (isActive) setPredictedSeries([]);
+          return;
+        }
+
         const predictedPoints = [];
-        let nextTime = new Date(String(lastTimestamp).replace(' ', 'T'));
+        const seededFillValues = [];
+
+        if (historyRange === 'day') {
+          const dayStart = getDayStartDate(selectedDate, historicalPoints[0]?.timestamp);
+          const hourlyActuals = new Map();
+
+          historicalPoints.forEach((point) => {
+            const bucketKey = getHourBucketKey(point.timestamp);
+            if (!bucketKey || !Number.isFinite(point.actualFill)) return;
+            hourlyActuals.set(bucketKey, point.actualFill);
+          });
+
+          for (let hourIndex = 0; hourIndex < 24; hourIndex += 1) {
+            const slotDate = new Date(dayStart);
+            slotDate.setHours(hourIndex, 0, 0, 0);
+            const slotTimestamp = slotDate.toISOString();
+
+            const predictedReading = await fetchFillPrediction({
+              ...createPredictionPayload(slotTimestamp, seededFillValues)
+            });
+
+            predictedPoints.push({
+              timestamp: slotTimestamp,
+              label: getHourLabel(hourIndex),
+              fill_percentage: predictedReading.predicted_fill,
+              isPrediction: true
+            });
+
+            const actualAtHour = hourlyActuals.get(getHourBucketKey(slotDate));
+            if (Number.isFinite(actualAtHour)) {
+              seededFillValues.push(actualAtHour);
+            } else if (Number.isFinite(predictedReading.predicted_fill)) {
+              seededFillValues.push(predictedReading.predicted_fill);
+            }
+          }
+
+          if (isActive) {
+            setPredictedSeries(predictedPoints);
+          }
+
+          return;
+        }
+
+        if (historyRange === 'week') {
+          const weekStart = getWeekStartDate(selectedDate, historicalPoints[0]?.timestamp);
+          const seededByDate = new Map();
+
+          historicalPoints.forEach((point) => {
+            if (!Number.isFinite(point.actualFill)) return;
+            const dateKey = point.bucketKey || getDayBucketKey(point.timestamp);
+            if (!dateKey) return;
+            seededByDate.set(dateKey, point.actualFill);
+          });
+
+          for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+            const slotDate = new Date(weekStart);
+            slotDate.setDate(slotDate.getDate() + dayIndex);
+            const slotTimestamp = toLocalTimestamp(slotDate);
+            const predictedReading = await fetchFillPrediction({
+              ...createPredictionPayload(slotTimestamp, seededFillValues)
+            });
+
+            predictedPoints.push({
+              timestamp: slotTimestamp,
+              label: WEEKDAY_LABELS[dayIndex],
+              fill_percentage: predictedReading.predicted_fill,
+              isPrediction: true
+            });
+
+            const actualAtDay = seededByDate.get(getDayBucketKey(slotDate));
+            if (Number.isFinite(actualAtDay)) {
+              seededFillValues.push(actualAtDay);
+            } else if (Number.isFinite(predictedReading.predicted_fill)) {
+              seededFillValues.push(predictedReading.predicted_fill);
+            }
+          }
+
+          if (isActive) {
+            setPredictedSeries(predictedPoints);
+          }
+
+          return;
+        }
+
+        if (historyRange === 'month') {
+          const monthStart = getMonthStartDate(selectedDate, historicalPoints[0]?.timestamp);
+          const daysInMonth = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate();
+          const seededByDate = new Map();
+
+          historicalPoints.forEach((point) => {
+            if (!Number.isFinite(point.actualFill)) return;
+            const dateKey = point.bucketKey || getDayBucketKey(point.timestamp);
+            if (!dateKey) return;
+            seededByDate.set(dateKey, point.actualFill);
+          });
+
+          for (let dayIndex = 0; dayIndex < daysInMonth; dayIndex += 1) {
+            const slotDate = new Date(monthStart);
+            slotDate.setDate(dayIndex + 1);
+            const slotTimestamp = toLocalTimestamp(slotDate);
+            const predictedReading = await fetchFillPrediction({
+              ...createPredictionPayload(slotTimestamp, seededFillValues)
+            });
+
+            predictedPoints.push({
+              timestamp: slotTimestamp,
+              label: getChartLabel(slotDate, historyRange),
+              fill_percentage: predictedReading.predicted_fill,
+              isPrediction: true
+            });
+
+            const actualAtDay = seededByDate.get(getDayBucketKey(slotDate));
+            if (Number.isFinite(actualAtDay)) {
+              seededFillValues.push(actualAtDay);
+            } else if (Number.isFinite(predictedReading.predicted_fill)) {
+              seededFillValues.push(predictedReading.predicted_fill);
+            }
+          }
+
+          if (isActive) {
+            setPredictedSeries(predictedPoints);
+          }
+
+          return;
+        }
+
+        for (const point of historicalPoints) {
+          const predictedReading = await fetchFillPrediction({
+            ...createPredictionPayload(point.timestamp, seededFillValues)
+          });
+
+          predictedPoints.push({
+            timestamp: point.timestamp,
+            label: point.label,
+            fill_percentage: predictedReading.predicted_fill,
+            isPrediction: true
+          });
+
+          if (Number.isFinite(point.actualFill)) {
+            seededFillValues.push(point.actualFill);
+          } else if (Number.isFinite(predictedReading.predicted_fill)) {
+            seededFillValues.push(predictedReading.predicted_fill);
+          }
+        }
+
+        const lastPoint = historicalPoints[historicalPoints.length - 1];
+        const steps = getPredictionSteps(historyRange);
+        let nextTime = new Date(String(lastPoint.timestamp).replace(' ', 'T'));
 
         for (let index = 0; index < steps; index += 1) {
           nextTime = getNextTimestamp(nextTime.toISOString(), historyRange);
           const predictedReading = await fetchFillPrediction({
-            device_id: selectedDevice,
-            timestamp: nextTime.toISOString(),
-            ...getLagFeatures(predictionHistory)
+            ...createPredictionPayload(nextTime.toISOString(), seededFillValues)
           });
 
           const predictedPoint = {
@@ -295,15 +627,17 @@ const Analytics = () => {
           };
 
           predictedPoints.push(predictedPoint);
-          predictionHistory.push(predictedPoint);
+          if (Number.isFinite(predictedReading.predicted_fill)) {
+            seededFillValues.push(predictedReading.predicted_fill);
+          }
         }
 
         if (isActive) {
-          setFuturePredictions(predictedPoints);
+          setPredictedSeries(predictedPoints);
         }
       } catch (err) {
         if (isActive) {
-          setFuturePredictions([]);
+          setPredictedSeries([]);
           setPredictionError(err.message);
         }
       } finally {
@@ -316,7 +650,7 @@ const Analytics = () => {
     return () => {
       isActive = false;
     };
-  }, [history, historyRange, selectedDevice]);
+  }, [createPredictionPayload, history, historyRange, selectedDate, selectedDevice]);
 
   const latestChartData = useMemo(
     () => bins.map((reading) => ({
@@ -331,30 +665,186 @@ const Analytics = () => {
 
   const trendData = useMemo(() => {
     const historicalPoints = groupHistoryForChart(history, historyRange);
+    const historicalTimestamps = new Set(historicalPoints.map((point) => point.timestamp));
+    const predictedByTimestamp = new Map(
+      predictedSeries.map((prediction) => [prediction.timestamp, prediction.fill_percentage])
+    );
 
-    return [
-      ...historicalPoints,
-      ...futurePredictions.map((prediction) => ({
+    const combinedData = historicalPoints.map((point) => ({
+      ...point,
+      predictedFill: predictedByTimestamp.has(point.timestamp)
+        ? predictedByTimestamp.get(point.timestamp)
+        : null
+    }));
+
+    predictedSeries.forEach((prediction) => {
+      if (historicalTimestamps.has(prediction.timestamp)) {
+        return;
+      }
+
+      combinedData.push({
         label: prediction.label,
         timestamp: prediction.timestamp,
+        bucketKey: getChartGroupKey({ timestamp: prediction.timestamp }, historyRange),
         actualFill: null,
         predictedFill: prediction.fill_percentage,
         weight: null,
         gas: null
-      }))
-    ];
-  }, [futurePredictions, history, historyRange]);
+      });
+    });
 
-  const xAxisInterval = historyRange === 'month'
-    ? Math.max(0, Math.ceil(trendData.length / 14) - 1)
-    : 0;
+    combinedData.sort((first, second) => new Date(first.timestamp) - new Date(second.timestamp));
+
+    if (historyRange === 'day') {
+      const dayStart = getDayStartDate(selectedDate, combinedData[0]?.timestamp);
+      const hourlyData = new Map();
+
+      combinedData.forEach((point) => {
+        const bucketKey = point.bucketKey || getHourBucketKey(point.timestamp);
+        if (!bucketKey) return;
+
+        const current = hourlyData.get(bucketKey) || {
+          actualFill: null,
+          predictedFill: null,
+          weight: null,
+          gas: null
+        };
+
+        if (point.actualFill !== null) current.actualFill = point.actualFill;
+        if (point.predictedFill !== null) current.predictedFill = point.predictedFill;
+        if (point.weight !== null) current.weight = point.weight;
+        if (point.gas !== null) current.gas = point.gas;
+
+        hourlyData.set(bucketKey, current);
+      });
+
+      return Array.from({ length: 24 }, (_, hourIndex) => {
+        const slotDate = new Date(dayStart);
+        slotDate.setHours(hourIndex, 0, 0, 0);
+        const bucketKey = getHourBucketKey(slotDate);
+        const value = hourlyData.get(bucketKey) || {};
+
+        return {
+          label: getHourLabel(hourIndex),
+          timestamp: slotDate.toISOString(),
+          actualFill: value.actualFill ?? null,
+          predictedFill: value.predictedFill ?? null,
+          weight: value.weight ?? null,
+          gas: value.gas ?? null
+        };
+      });
+    }
+
+    if (historyRange === 'month') {
+      const monthStart = getMonthStartDate(selectedDate);
+      const month = monthStart.getMonth();
+      const year = monthStart.getFullYear();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const dailyData = new Map();
+
+      combinedData.forEach((point) => {
+        const bucketKey = point.bucketKey || getDayBucketKey(point.timestamp);
+        if (!bucketKey) return;
+
+        const current = dailyData.get(bucketKey) || {
+          actualFill: null,
+          predictedFill: null,
+          weight: null,
+          gas: null
+        };
+
+        if (point.actualFill !== null) current.actualFill = point.actualFill;
+        if (point.predictedFill !== null) current.predictedFill = point.predictedFill;
+        if (point.weight !== null) current.weight = point.weight;
+        if (point.gas !== null) current.gas = point.gas;
+
+        dailyData.set(bucketKey, current);
+      });
+
+      return Array.from({ length: daysInMonth }, (_, dayIndex) => {
+        const slotDate = new Date(monthStart);
+        slotDate.setDate(dayIndex + 1);
+        const bucketKey = getDayBucketKey(slotDate);
+        const value = dailyData.get(bucketKey) || {};
+
+        return {
+          label: getChartLabel(slotDate, historyRange),
+          timestamp: toLocalTimestamp(slotDate),
+          actualFill: value.actualFill ?? null,
+          predictedFill: value.predictedFill ?? null,
+          weight: value.weight ?? null,
+          gas: value.gas ?? null
+        };
+      });
+    }
+
+    if (historyRange === 'week') {
+      const weekStart = getWeekStartDate(selectedDate, combinedData[0]?.timestamp);
+      const weekStartMs = weekStart.getTime();
+      const oneDayMs = 24 * 60 * 60 * 1000;
+      const weeklyData = Array.from({ length: 7 }, () => ({
+        actualFill: null,
+        predictedFill: null,
+        weight: null,
+        gas: null
+      }));
+
+      combinedData.forEach((point) => {
+        const bucketKey = point.bucketKey || getDayBucketKey(point.timestamp);
+        const pointDate = parseDateKey(bucketKey) || new Date(String(point.timestamp).replace(' ', 'T'));
+        if (Number.isNaN(pointDate.getTime())) return;
+
+        pointDate.setHours(0, 0, 0, 0);
+        const dayIndex = Math.round((pointDate.getTime() - weekStartMs) / oneDayMs);
+        if (dayIndex < 0 || dayIndex > 6) return;
+
+        const current = weeklyData[dayIndex];
+        if (point.actualFill !== null) current.actualFill = point.actualFill;
+        if (point.predictedFill !== null) current.predictedFill = point.predictedFill;
+        if (point.weight !== null) current.weight = point.weight;
+        if (point.gas !== null) current.gas = point.gas;
+      });
+
+      return Array.from({ length: 7 }, (_, dayIndex) => {
+        const slotDate = new Date(weekStart);
+        slotDate.setDate(slotDate.getDate() + dayIndex);
+        const value = weeklyData[dayIndex];
+
+        return {
+          label: WEEKDAY_LABELS[dayIndex],
+          timestamp: toLocalTimestamp(slotDate),
+          actualFill: value.actualFill,
+          predictedFill: value.predictedFill,
+          weight: value.weight,
+          gas: value.gas
+        };
+      });
+    }
+
+    return combinedData;
+  }, [history, historyRange, predictedSeries, selectedDate]);
+
+  const trendChartMinWidth = useMemo(() => {
+    if (historyRange === 'day') return 1440;
+    if (historyRange === 'week') return 860;
+    return Math.max(820, trendData.length * 42);
+  }, [historyRange, trendData.length]);
+
+  const xAxisInterval = 0;
+  const xAxisDataKey = historyRange === 'week' ? 'label' : 'timestamp';
+
+  const formatXAxisTick = useCallback((timestampValue) => getChartLabel(timestampValue, historyRange), [historyRange]);
+  const formatTooltipLabel = useCallback((label, payload) => {
+    const timestamp = payload?.[0]?.payload?.timestamp;
+    return formatTooltipDate(timestamp || label, historyRange);
+  }, [historyRange]);
 
   const axisProps = {
     interval: xAxisInterval,
     tick: { fontSize: 11, fill: '#7F8C8D' },
-    angle: historyRange === 'day' ? 0 : -30,
-    textAnchor: historyRange === 'day' ? 'middle' : 'end',
-    height: historyRange === 'day' ? 40 : 70
+    angle: historyRange === 'month' ? -30 : 0,
+    textAnchor: historyRange === 'month' ? 'end' : 'middle',
+    height: historyRange === 'month' ? 70 : 45
   };
 
   const fillStatusData = useMemo(() => {
@@ -460,34 +950,38 @@ const Analytics = () => {
           </div>
         )}
 
-        <ResponsiveContainer width="100%" height={340}>
-          <LineChart data={trendData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="label" {...axisProps} />
-            <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#7F8C8D' }} />
-            <Tooltip />
-            <Legend />
-            <Line
-              type="monotone"
-              dataKey="actualFill"
-              name="Historical Fill %"
-              stroke="#3A6EA5"
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              connectNulls={false}
-            />
-            <Line
-              type="monotone"
-              dataKey="predictedFill"
-              name="Predicted Fill %"
-              stroke="#2ECC71"
-              strokeWidth={2}
-              strokeDasharray="5 5"
-              dot={{ r: 3 }}
-              connectNulls={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+        <div className="overflow-x-auto">
+          <div style={{ minWidth: `${trendChartMinWidth}px` }}>
+            <ResponsiveContainer width="100%" height={340}>
+              <LineChart data={trendData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey={xAxisDataKey} tickFormatter={historyRange === 'week' ? undefined : formatXAxisTick} {...axisProps} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#7F8C8D' }} />
+                <Tooltip labelFormatter={formatTooltipLabel} />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="actualFill"
+                  name="Historical Fill %"
+                  stroke="#3A6EA5"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="predictedFill"
+                  name="Predicted Fill %"
+                  stroke="#2ECC71"
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  dot={{ r: 3 }}
+                  connectNulls={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-card p-6">
@@ -511,17 +1005,21 @@ const Analytics = () => {
         <div className="bg-white rounded-lg shadow-card p-6">
           <h3 className="text-lg font-semibold text-dark-blue mb-1">Historical Weight and Gas for {selectedDevice || '-'}</h3>
           <p className="text-sm text-grey mb-6">Uses MongoDB readings from the selected history window.</p>
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={trendData.filter((item) => item.gas !== null || item.weight !== null)}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="label" {...axisProps} />
-              <YAxis tick={{ fontSize: 12, fill: '#7F8C8D' }} />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="weight" name="Bin Weight (kg)" stroke="#2ECC71" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
-              <Line type="monotone" dataKey="gas" name="Historical Gas" stroke="#F39C12" strokeWidth={2} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
+          <div className="overflow-x-auto">
+            <div style={{ minWidth: `${trendChartMinWidth}px` }}>
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={trendData.filter((item) => item.gas !== null || item.weight !== null)}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey={xAxisDataKey} tickFormatter={historyRange === 'week' ? undefined : formatXAxisTick} {...axisProps} />
+                  <YAxis tick={{ fontSize: 12, fill: '#7F8C8D' }} />
+                  <Tooltip labelFormatter={formatTooltipLabel} />
+                  <Legend />
+                  <Line type="monotone" dataKey="weight" name="Bin Weight (kg)" stroke="#2ECC71" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
+                  <Line type="monotone" dataKey="gas" name="Historical Gas" stroke="#F39C12" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
 
         <div className="bg-white rounded-lg shadow-card p-6">
