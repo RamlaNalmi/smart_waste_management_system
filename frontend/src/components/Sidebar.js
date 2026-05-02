@@ -16,7 +16,6 @@ const menuItems = [
   { id: 'analytics', label: 'Analytics / Trends', icon: TrendingUp, permission: 'analytics:view' },
   { id: 'alerts', label: 'Alerts & Notifications', icon: AlertTriangle, permission: 'alerts:view' },
   { id: 'map', label: 'Map View', icon: MapPin, permission: 'map:view' },
-  { id: 'reports', label: 'Reports', icon: FileText, permission: 'reports:view' },
   { id: 'settings', label: 'Settings', icon: Settings, permission: 'settings:view' },
   { id: 'users', label: 'User Management', icon: Users, permission: 'users:view' },
 ];
