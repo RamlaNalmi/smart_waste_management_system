@@ -43,6 +43,13 @@ const detectIntent = (message) => {
   const msg = message.toLowerCase();
 
   if (
+    msg.includes('what can you do') ||
+    msg.includes('things you can help') ||
+    msg.includes('help me with') ||
+    msg.includes('what kind of things') ||
+    msg.includes('capabilities')
+  ) return 'capabilities';
+  if (
     (msg.includes('predict') ||
       msg.includes('forecast') ||
       msg.includes('tomorrow') ||
@@ -70,6 +77,14 @@ const detectIntent = (message) => {
 };
 
 const extractDeviceId = (message) => message.match(/esp32_\d+/i)?.[0] || null;
+
+const isCollectionPlanningQuery = (message = '') => {
+  const msg = message.toLowerCase();
+  return (
+    (msg.includes('collect') || msg.includes('collection') || msg.includes('pickup') || msg.includes('pick up'))
+    && (msg.includes('which') || msg.includes('should') || msg.includes('need') || msg.includes('tomorrow') || msg.includes('priority'))
+  );
+};
 
 const parseTargetTimestamp = (message) => {
   const lowerMessage = message.toLowerCase();
@@ -132,6 +147,13 @@ const getFillStatus = (fillPercentage) => {
   if (fillPercentage >= 80) return 'HIGH';
   if (fillPercentage >= 40) return 'MEDIUM';
   return 'LOW';
+};
+
+const getCollectionPriority = (predictedFill) => {
+  if (predictedFill >= 90) return 'Collect immediately';
+  if (predictedFill >= 80) return 'High priority';
+  if (predictedFill >= 70) return 'Schedule soon';
+  return 'Monitor';
 };
 
 const getTrendDirection = (values = []) => {
@@ -321,14 +343,75 @@ const buildDeterministicAnswer = async (intent, data, message) => {
   if (!readings.length) return 'No sensor readings are available in the database.';
 
   switch (intent) {
+    case 'capabilities':
+      return [
+        'I can help you with:',
+        '- Answer dataset questions about fill level, gas, weight, fall detection, alerts, and locations.',
+        '- Predict a bin fill level for a selected device and time using the ML model.',
+        '- Compare bins by fill level, status, gas, weight, or collection priority.',
+        '- Explain recent trends in the Analytics charts.',
+        '- Identify anomalies such as high fill, gas alerts, falls, or unusual readings.',
+        '- Guide you through Dashboard, Database Readings, Map View, Analytics, Alerts, and Reports.',
+        '- Recommend which bins need attention first based on fill level, gas alerts, falls, and recent trend.'
+      ].join('\n');
+
     case 'fill_prediction': {
       const deviceId = extractDeviceId(message);
-      if (!deviceId) return 'Please include the device ID, for example esp32_08.';
+      const targetTimestamp = parseTargetTimestamp(message);
+      const collectionPlanning = isCollectionPlanningQuery(message);
+
+      if (!deviceId && collectionPlanning) {
+        const planningTimestamp = targetTimestamp || (() => {
+          const tomorrowMorning = new Date();
+          tomorrowMorning.setDate(tomorrowMorning.getDate() + 1);
+          tomorrowMorning.setHours(9, 0, 0, 0);
+          return tomorrowMorning;
+        })();
+
+        const predictedBins = await Promise.all(
+          readings.map(async (reading) => {
+            try {
+              const prediction = await predictFillLevel({
+                device_id: reading.device_id,
+                timestamp: planningTimestamp.toISOString(),
+                ...getLagFeatures(data.fillHistoryByDevice[reading.device_id] || [reading.fill_percentage])
+              }, reading);
+
+              const predictedFill = Number(prediction.predictedFillPercentage) || 0;
+              return {
+                device_id: reading.device_id,
+                location: reading.location || 'location not registered',
+                predictedFill,
+                priority: getCollectionPriority(predictedFill)
+              };
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        const actionableBins = predictedBins
+          .filter(Boolean)
+          .sort((first, second) => second.predictedFill - first.predictedFill)
+          .filter((bin) => bin.predictedFill >= 70);
+
+        if (!actionableBins.length) {
+          return `No bins are predicted to require collection by ${formatTargetTime(planningTimestamp)}.`;
+        }
+
+        return [
+          `Bins to collect by ${formatTargetTime(planningTimestamp)} (predicted):`,
+          ...actionableBins.map((bin) =>
+            `- ${bin.device_id}: ${bin.location} - ${Math.round(bin.predictedFill)}% (${bin.priority})`
+          )
+        ].join('\n');
+      }
+
+      if (!deviceId) return 'Please include the device ID, for example esp32_08, or ask "which bins should I collect tomorrow?".';
 
       const reading = readings.find((item) => item.device_id.toLowerCase() === deviceId.toLowerCase());
       if (!reading) return `No current reading found for ${deviceId}.`;
 
-      const targetTimestamp = parseTargetTimestamp(message);
       if (!targetTimestamp) return `Please include the prediction time for ${reading.device_id}.`;
 
       let prediction;
