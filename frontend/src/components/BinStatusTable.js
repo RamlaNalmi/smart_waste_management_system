@@ -23,12 +23,52 @@ import {
   Settings
 } from 'lucide-react';
 import BinDetails from './BinDetails';
-import { getBinLocation } from '../data/binLocations';
+import { getBinLocationFromDetails } from '../services/api';
 
 const EMPTY_TABLE_DATA = [];
 
-const BinStatusTable = ({ limit = null, data = null }) => {
-  const tableData = useMemo(() => data || EMPTY_TABLE_DATA, [data]);
+const BinStatusTable = ({ limit = null, data = null, binDetails = [], sensorData = [] }) => {
+  // Merge bin_details with sensor data for complete bin information
+  const mergedBinData = useMemo(() => {
+    return binDetails.map(binDetail => {
+      const sensor = sensorData.find(sensor => sensor.device_id === binDetail.device_id);
+      return {
+        // Bin details data
+        device_id: binDetail.device_id,
+        height: binDetail.height,
+        location: binDetail.location,
+        createdAt: binDetail.createdAt,
+        updatedAt: binDetail.updatedAt,
+        
+        // Essential sensor fields (from actual API structure)
+        id: sensor?._id || binDetail.device_id,
+        fill_percentage: sensor?.fill_percentage || 0,
+        fill_status: sensor?.fill_status || 'LOW',
+        fill_distance: sensor?.distance || 0,
+        usage_count: sensor?.usage_count || 0, // may not exist in API
+        odor_status: sensor?.odor_status || 'Fresh', // may not exist in API
+        
+        // Additional sensor data (from actual API)
+        gas: sensor?.gas || 0,
+        gas_alert: sensor?.gas_alert || false,
+        angleX: sensor?.angleX || 0,
+        angleY: sensor?.angleY || 0,
+        fall_detected: sensor?.fall_detected || false,
+        bin_weight: sensor?.bin_weight || 0,
+        timestamp: sensor?.timestamp || new Date().toISOString(),
+        received_at: sensor?.received_at || new Date().toISOString(),
+        topic: sensor?.topic || 'iot/smartbin/data',
+        
+        // UI Status calculation
+        uiStatus: sensor?.uiStatus || (
+          (sensor?.fill_percentage || 0) >= 90 ? 'critical' :
+          (sensor?.fill_percentage || 0) >= 70 ? 'warning' : 'normal'
+        )
+      };
+    });
+  }, [binDetails, sensorData]);
+
+  const tableData = useMemo(() => data || mergedBinData, [data, mergedBinData]);
   const [sortConfig, setSortConfig] = useState({ key: 'received_at', direction: 'desc' });
   const [filters, setFilters] = useState({
     status: 'all',
@@ -69,13 +109,13 @@ const BinStatusTable = ({ limit = null, data = null }) => {
     
     // Apply filters
     if (filters.status !== 'all') {
-      filtered = filtered.filter((reading) => reading.uiStatus === filters.status);
+      filtered = filtered.filter((reading) => (reading.uiStatus || 'normal') === filters.status);
     }
     
     if (filters.search) {
       const searchLower = filters.search.toLowerCase();
       filtered = filtered.filter((reading) => {
-        const location = getBinLocation(reading.device_id);
+        const location = getBinLocationFromDetails(reading.device_id, binDetails);
         return (
           reading.device_id.toLowerCase().includes(searchLower) ||
           (location && location.name.toLowerCase().includes(searchLower)) ||
@@ -87,14 +127,14 @@ const BinStatusTable = ({ limit = null, data = null }) => {
     
     if (filters.wasteType !== 'all') {
       filtered = filtered.filter((reading) => {
-        const location = getBinLocation(reading.device_id);
+        const location = getBinLocationFromDetails(reading.device_id, binDetails);
         return location && location.waste_type === filters.wasteType;
       });
     }
     
     if (filters.district !== 'all') {
       filtered = filtered.filter((reading) => {
-        const location = getBinLocation(reading.device_id);
+        const location = getBinLocationFromDetails(reading.device_id, binDetails);
         return location && location.district === filters.district;
       });
     }
@@ -131,17 +171,17 @@ const BinStatusTable = ({ limit = null, data = null }) => {
   
   const availableFilters = useMemo(() => {
     const districts = [...new Set(tableData.map(item => {
-      const location = getBinLocation(item.device_id);
+      const location = getBinLocationFromDetails(item.device_id, binDetails);
       return location?.district || 'Unknown';
     }))].filter(Boolean);
     
     const wasteTypes = [...new Set(tableData.map(item => {
-      const location = getBinLocation(item.device_id);
+      const location = getBinLocationFromDetails(item.device_id, binDetails);
       return location?.waste_type || 'Unknown';
     }))].filter(Boolean);
     
     return { districts, wasteTypes };
-  }, [tableData]);
+  }, [tableData, binDetails]);
   
   const clearFilters = useCallback(() => {
     setFilters({
@@ -291,7 +331,7 @@ const BinStatusTable = ({ limit = null, data = null }) => {
         )}
       </div>
 
-      {/* Enhanced Table */}
+      {/* Clean Table */}
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -301,34 +341,28 @@ const BinStatusTable = ({ limit = null, data = null }) => {
                 ['location', 'Location', 'left'],
                 ['waste_type', 'Waste Type', 'left'],
                 ['fill_percentage', 'Fill Level', 'center'],
-                ['weight', 'Weight', 'center'],
+                ['fill_distance', 'Distance', 'center'],
+                ['gas', 'Gas', 'center'],
                 ['status', 'Status', 'center'],
-                ['alerts', 'Alerts', 'center'],
-                ['last_update', 'Last Update', 'left'],
-                ['actions', 'Actions', 'center']
+                ['last_update', 'Last Update', 'left']
               ].map(([key, label, align]) => (
                 <th key={key} className={`py-3 px-4 text-${align}`}>
-                  {key === 'actions' ? (
-                    <span className="text-xs font-medium text-gray-700 uppercase tracking-wider">{label}</span>
-                  ) : (
-                    <button
-                      onClick={() => handleSort(key)}
-                      className="flex items-center space-x-1 text-xs font-medium text-gray-700 uppercase tracking-wider hover:text-blue-600 transition-colors"
-                    >
-                      <span>{label}</span>
-                      {getSortIcon(key)}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleSort(key)}
+                    className="flex items-center space-x-1 text-xs font-medium text-gray-700 uppercase tracking-wider hover:text-blue-600 transition-colors"
+                  >
+                    <span>{label}</span>
+                    {getSortIcon(key)}
+                  </button>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {displayData.map((reading) => {
-              const location = getBinLocation(reading.device_id);
+            {displayData.map((reading, index) => {
+              const location = getBinLocationFromDetails(reading.device_id, binDetails);
               const hasGasAlert = reading.gas_alert;
               const hasFallAlert = reading.fall_detected;
-              const currentWeight = reading.current_weight || Math.round((reading.fill_percentage / 100) * (location?.max_weight || 500));
               
               return (
                 <tr
@@ -337,33 +371,28 @@ const BinStatusTable = ({ limit = null, data = null }) => {
                   onClick={() => setSelectedBin(reading)}
                 >
                   {/* Device ID */}
-                  <td className="py-4 px-4">
+                  <td className="py-3 px-4">
                     <div className="flex items-center space-x-3">
                       <div className="flex-shrink-0">
                         <div className={`w-2 h-2 rounded-full ${
-                          reading.uiStatus === 'critical' ? 'bg-red-500 animate-pulse' :
+                          reading.uiStatus === 'critical' ? 'bg-red-500' :
                           reading.uiStatus === 'warning' ? 'bg-yellow-500' :
                           'bg-green-500'
                         }`}></div>
                       </div>
                       <div>
                         <div className="text-sm font-medium text-gray-900">{reading.device_id}</div>
-                        <div className="text-xs text-gray-500">ID: {reading.id}</div>
+                        <div className="text-xs text-gray-500">{reading.height}cm</div>
                       </div>
                     </div>
                   </td>
                   
                   {/* Location */}
-                  <td className="py-4 px-4">
+                  <td className="py-3 px-4">
                     {location ? (
-                      <div className="space-y-1">
-                        <div className="flex items-center space-x-1">
-                          <MapPin className="w-3 h-3 text-gray-400" />
-                          <span className="text-sm font-medium text-gray-900">{location.name}</span>
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {location.district} • {location.area}
-                        </div>
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">{location.name}</div>
+                        <div className="text-xs text-gray-500">{location.address}</div>
                       </div>
                     ) : (
                       <span className="text-sm text-gray-500">Unknown Location</span>
@@ -371,148 +400,87 @@ const BinStatusTable = ({ limit = null, data = null }) => {
                   </td>
                   
                   {/* Waste Type */}
-                  <td className="py-4 px-4">
+                  <td className="py-3 px-4">
                     <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
                       location?.waste_type === 'Organic (Bio-Degradable) Waste' ? 'bg-green-100 text-green-800' :
                       location?.waste_type === 'Recyclable Waste' ? 'bg-blue-100 text-blue-800' :
-                      'bg-red-100 text-red-800'
+                      'bg-gray-100 text-gray-800'
                     }`}>
                       {location?.waste_type || 'Unknown'}
                     </span>
                   </td>
                   
                   {/* Fill Level */}
-                  <td className="py-4 px-4">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-center">
-                        <span className={`text-lg font-bold ${
+                  <td className="py-3 px-4">
+                    <div className="text-center">
+                      <div className="flex items-center justify-center space-x-2">
+                        <span className={`text-sm font-medium ${
                           reading.fill_percentage >= 90 ? 'text-red-600' :
                           reading.fill_percentage >= 70 ? 'text-yellow-600' :
                           'text-green-600'
                         }`}>
                           {reading.fill_percentage}%
                         </span>
+                        <div className="w-16 bg-gray-200 rounded-full h-2">
+                          <div
+                            className={`h-2 rounded-full ${
+                              reading.fill_percentage >= 90 ? 'bg-red-500' :
+                              reading.fill_percentage >= 70 ? 'bg-yellow-500' :
+                              'bg-green-500'
+                            }`}
+                            style={{ width: `${reading.fill_percentage}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="w-20 bg-gray-200 rounded-full h-2">
-                        <div
-                          className={`h-2 rounded-full transition-all duration-300 ${
-                            reading.fill_percentage >= 90 ? 'bg-red-500' :
-                            reading.fill_percentage >= 70 ? 'bg-yellow-500' :
-                            'bg-green-500'
-                          }`}
-                          style={{ width: `${reading.fill_percentage}%` }}
-                        />
-                      </div>
+                      <div className="text-xs text-gray-500">{reading.fill_status}</div>
                     </div>
                   </td>
                   
-                  {/* Weight */}
-                  <td className="py-4 px-4">
+                  {/* Distance */}
+                  <td className="py-3 px-4">
                     <div className="text-center">
-                      <div className="text-sm font-bold text-gray-900">{currentWeight} kg</div>
-                      <div className="text-xs text-gray-500">of {location?.max_weight || 500} kg</div>
-                    </div>
-                  </td>
-                  
-                  {/* Status */}
-                  <td className="py-4 px-4">
-                    <div className="text-center">
-                      <span className={`inline-flex px-3 py-1 text-xs font-bold rounded-full ${
-                        reading.uiStatus === 'critical' ? 'bg-red-100 text-red-700' :
-                        reading.uiStatus === 'warning' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-green-100 text-green-700'
-                      }`}>
-                        {reading.uiStatus.toUpperCase()}
+                      <span className="text-sm font-medium text-gray-900">
+                        {reading.fill_distance} cm
                       </span>
                     </div>
                   </td>
                   
-                  {/* Alerts */}
-                  <td className="py-4 px-4">
-                    <div className="flex justify-center space-x-1">
-                      {hasGasAlert && (
-                        <div className="p-1 bg-orange-100 rounded-full">
-                          <Wind className="w-3 h-3 text-orange-600" />
-                        </div>
-                      )}
+                  {/* Gas */}
+                  <td className="py-3 px-4">
+                    <div className="text-center">
+                      <div className="flex items-center justify-center space-x-1">
+                        <span className="text-sm font-medium text-gray-900">
+                          {reading.gas}
+                        </span>
+                        {hasGasAlert && (
+                          <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  
+                  {/* Status */}
+                  <td className="py-3 px-4">
+                    <div className="text-center">
+                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                        reading.uiStatus === 'critical' ? 'bg-red-100 text-red-700' :
+                        reading.uiStatus === 'warning' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-green-100 text-green-700'
+                      }`}>
+                        {(reading.uiStatus || 'normal').toUpperCase()}
+                      </span>
                       {hasFallAlert && (
-                        <div className="p-1 bg-red-100 rounded-full">
-                          <AlertTriangle className="w-3 h-3 text-red-600" />
+                        <div className="mt-1">
+                          <AlertTriangle className="w-3 h-3 text-red-500 mx-auto" />
                         </div>
-                      )}
-                      {!hasGasAlert && !hasFallAlert && (
-                        <span className="text-xs text-gray-400">None</span>
                       )}
                     </div>
                   </td>
                   
                   {/* Last Update */}
-                  <td className="py-4 px-4">
+                  <td className="py-3 px-4">
                     <div className="text-sm text-gray-900">
                       {reading.received_at ? new Date(reading.received_at).toLocaleString() : '-'}
-                    </div>
-                  </td>
-                  
-                  {/* Actions */}
-                  <td className="py-4 px-4">
-                    <div className="flex items-center justify-center space-x-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedBin(reading);
-                        }}
-                        className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
-                        title="View Details"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          // TODO: Edit functionality
-                        }}
-                        className="p-1 text-gray-400 hover:text-green-600 transition-colors"
-                        title="Edit"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <div className="relative">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setShowActions(showActions === reading.id ? null : reading.id);
-                          }}
-                          className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                          title="More Actions"
-                        >
-                          <MoreVertical className="w-4 h-4" />
-                        </button>
-                        
-                        {/* Dropdown Actions */}
-                        {showActions === reading.id && (
-                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
-                            <div className="py-1">
-                              <button className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                <Bell className="w-4 h-4" />
-                                <span>Set Alert</span>
-                              </button>
-                              <button className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                <Truck className="w-4 h-4" />
-                                <span>Schedule Collection</span>
-                              </button>
-                              <button className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                <Settings className="w-4 h-4" />
-                                <span>Configure</span>
-                              </button>
-                              <hr className="my-1" />
-                              <button className="flex items-center space-x-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50">
-                                <Trash className="w-4 h-4" />
-                                <span>Delete</span>
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
                     </div>
                   </td>
                 </tr>

@@ -26,6 +26,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/bins', require('./routes/bins'));
 app.use('/api/bin', require('./routes/bins'));
 app.use('/api/bin-registrations', require('./routes/binRegistrations'));
+app.use('/api/bin-details', require('./routes/binDetails'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/predictions', require('./routes/predictions'));

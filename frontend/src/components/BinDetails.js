@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   AlertTriangle, 
   Database, 
@@ -19,9 +19,16 @@ import {
   Calendar,
   BarChart3,
   Zap,
-  Shield
+  Shield,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  ChevronDown,
+  History,
+  LineChart as LineChartIcon
 } from 'lucide-react';
-import { getBinLocation } from '../data/binLocations';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { getBinLocationFromDetails, fetchBinHistory, createBinUpdatesSource } from '../services/api';
 
 const DetailRow = ({ label, value, icon, status = 'normal' }) => {
   const getStatusColor = (status) => {
@@ -54,12 +61,110 @@ const DetailRow = ({ label, value, icon, status = 'normal' }) => {
 };
 
 const BinDetails = ({ bin, onClose }) => {
-  if (!bin) return null;
+  const [liveBin, setLiveBin] = useState(bin);
+  const [isLive, setIsLive] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [showHistorical, setShowHistorical] = useState(false);
+  const [historicalData, setHistoricalData] = useState([]);
+  const [dateRange, setDateRange] = useState('day');
+  const [isLoadingHistorical, setIsLoadingHistorical] = useState(false);
 
-  const location = getBinLocation(bin.device_id);
-  const currentWeight = bin.current_weight || Math.round((bin.fill_percentage / 100) * (location?.max_weight || 500));
-  const hasAlerts = bin.gas_alert || bin.fall_detected || bin.fill_percentage >= 90;
-  const status = bin.uiStatus || (bin.fill_percentage >= 90 ? 'critical' : bin.fill_percentage >= 70 ? 'warning' : 'normal');
+  // Function to load historical data
+  const loadHistoricalData = useCallback(async () => {
+    if (!bin?.device_id) return;
+    
+    try {
+      setIsLoadingHistorical(true);
+      setError(null);
+      
+      const history = await fetchBinHistory(bin.device_id, { 
+        limit: 100, 
+        range: dateRange 
+      });
+      setHistoricalData(history);
+    } catch (err) {
+      setError(err.message);
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setIsLoadingHistorical(false);
+    }
+  }, [bin?.device_id, dateRange]);
+
+  // Load historical data when showHistorical is toggled
+  useEffect(() => {
+    if (showHistorical) {
+      loadHistoricalData();
+    }
+  }, [showHistorical, loadHistoricalData]);
+
+  // Function to refresh bin data
+  const refreshBinData = useCallback(async () => {
+    if (!bin?.device_id) return;
+    
+    try {
+      setIsRefreshing(true);
+      setError(null);
+      
+      // Fetch latest data for this specific bin
+      const history = await fetchBinHistory(bin.device_id, { limit: 1 });
+      if (history.length > 0) {
+        setLiveBin(history[0]);
+        setLastUpdate(new Date());
+      }
+    } catch (err) {
+      setError(err.message);
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [bin?.device_id]);
+
+  // Set up live updates
+  useEffect(() => {
+    if (!bin?.device_id) return;
+
+    const eventSource = createBinUpdatesSource();
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        // Check if this update is for our bin
+        if (data.device_id === bin.device_id) {
+          setLiveBin(prev => ({ ...prev, ...data }));
+          setLastUpdate(new Date());
+          setIsLive(true);
+        }
+      } catch (err) {
+        console.error('Error parsing live update:', err);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error('Live connection error:', err);
+      setIsLive(false);
+      setError('Live connection lost. Using cached data.');
+      setTimeout(() => setError(null), 3000);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [bin?.device_id]);
+
+  // Initialize with provided bin data
+  useEffect(() => {
+    setLiveBin(bin);
+  }, [bin]);
+
+  if (!liveBin) return null;
+
+  const location = getBinLocationFromDetails(liveBin.device_id);
+  const currentWeight = liveBin.current_weight || Math.round((liveBin.fill_percentage / 100) * (location?.max_weight || 500));
+  const hasAlerts = liveBin.gas_alert || liveBin.fall_detected || liveBin.fill_percentage >= 90;
+  const status = liveBin.uiStatus || (liveBin.fill_percentage >= 90 ? 'critical' : liveBin.fill_percentage >= 70 ? 'warning' : 'normal');
 
   const getStatusConfig = (status) => {
     switch (status) {
@@ -98,22 +203,52 @@ const BinDetails = ({ bin, onClose }) => {
           <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-10 rounded-full -mr-16 -mt-16"></div>
           <div className="absolute bottom-0 left-0 w-24 h-24 bg-white opacity-10 rounded-full -ml-12 -mb-12"></div>
           
+          {/* Error Display */}
+          {error && (
+            <div className="absolute top-4 left-4 right-4 bg-red-600 text-white p-3 rounded-lg shadow-lg z-20">
+              <div className="flex items-center space-x-2">
+                <WifiOff className="w-4 h-4" />
+                <span className="text-sm font-medium">{error}</span>
+              </div>
+            </div>
+          )}
+          
           <div className="relative z-10 flex items-center justify-between">
             <div className="flex items-center space-x-4">
               <div className="p-3 bg-white bg-opacity-20 rounded-xl backdrop-blur-sm">
                 <Database className="w-8 h-8" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold">{bin.device_id}</h2>
+                <h2 className="text-2xl font-bold">{liveBin.device_id}</h2>
                 <p className="text-white text-opacity-90 mt-1">{location?.name || 'Unknown Location'}</p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="text-white hover:bg-white hover:bg-opacity-20 rounded-xl p-3 transition-all duration-200 transform hover:scale-105"
-            >
-              <X className="w-6 h-6" />
-            </button>
+            <div className="flex items-center space-x-3">
+              {/* Live Status Indicator */}
+              {isLive && (
+                <div className="flex items-center space-x-2 bg-white bg-opacity-20 px-3 py-2 rounded-lg backdrop-blur-sm">
+                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                  <span className="text-sm font-medium">LIVE</span>
+                </div>
+              )}
+              
+              {/* Refresh Button */}
+              <button
+                onClick={refreshBinData}
+                disabled={isRefreshing}
+                className="text-white hover:bg-white hover:bg-opacity-20 rounded-xl p-3 transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Refresh data"
+              >
+                <RefreshCw className={`w-6 h-6 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+              
+              <button
+                onClick={onClose}
+                className="text-white hover:bg-white hover:bg-opacity-20 rounded-xl p-3 transition-all duration-200 transform hover:scale-105"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
           </div>
           
           {/* Status Banner */}
@@ -154,11 +289,11 @@ const BinDetails = ({ bin, onClose }) => {
                 <Gauge className="w-5 h-5 text-blue-600" />
                 <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">Fill Level</span>
               </div>
-              <div className="text-2xl font-bold text-blue-900">{bin.fill_percentage}%</div>
+              <div className="text-2xl font-bold text-blue-900">{liveBin.fill_percentage}%</div>
               <div className="w-full bg-blue-200 rounded-full h-2 mt-2">
                 <div 
                   className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${bin.fill_percentage}%` }}
+                  style={{ width: `${liveBin.fill_percentage}%` }}
                 ></div>
               </div>
             </div>
@@ -182,6 +317,28 @@ const BinDetails = ({ bin, onClose }) => {
             </div>
           </div>
 
+          {/* Live Update Status */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center space-x-2">
+                {isLive ? (
+                  <>
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-sm font-medium text-green-600">Live Updates Active</span>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-4 h-4 text-gray-500" />
+                    <span className="text-sm font-medium text-gray-600">Live Updates Inactive</span>
+                  </>
+                )}
+              </div>
+              <div className="text-xs text-gray-500">
+                Last update: {lastUpdate.toLocaleTimeString()}
+              </div>
+            </div>
+          </div>
+
           {/* Location Information */}
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
@@ -191,7 +348,7 @@ const BinDetails = ({ bin, onClose }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <DetailRow 
                 label="Device ID" 
-                value={bin.device_id} 
+                value={liveBin.device_id} 
                 icon={<Database className="w-4 h-4" />}
               />
               <DetailRow 
@@ -233,34 +390,34 @@ const BinDetails = ({ bin, onClose }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <DetailRow 
                 label="Fill Percentage" 
-                value={`${bin.fill_percentage}%`} 
+                value={`${liveBin.fill_percentage}%`} 
                 icon={<Gauge className="w-4 h-4" />}
-                status={bin.fill_percentage >= 90 ? 'critical' : bin.fill_percentage >= 70 ? 'warning' : 'success'}
+                status={liveBin.fill_percentage >= 90 ? 'critical' : liveBin.fill_percentage >= 70 ? 'warning' : 'success'}
               />
               <DetailRow 
                 label="Fill Status" 
-                value={bin.fill_status || 'Unknown'} 
+                value={liveBin.fill_status || 'Unknown'} 
                 icon={<BarChart3 className="w-4 h-4" />}
               />
               <DetailRow 
                 label="Distance" 
-                value={bin.distance ? `${bin.distance} units` : 'Not available'} 
+                value={liveBin.distance ? `${liveBin.distance} units` : 'Not available'} 
                 icon={<Activity className="w-4 h-4" />}
               />
               <DetailRow 
                 label="Gas Level" 
-                value={bin.gas ? `${bin.gas} ppm` : 'Normal'} 
+                value={liveBin.gas ? `${liveBin.gas} ppm` : 'Normal'} 
                 icon={<Wind className="w-4 h-4" />}
-                status={bin.gas_alert ? 'critical' : 'normal'}
+                status={liveBin.gas_alert ? 'critical' : 'normal'}
               />
               <DetailRow 
                 label="Angle X" 
-                value={bin.angleX ? `${bin.angleX}°` : '0°'} 
+                value={liveBin.angleX ? `${liveBin.angleX}°` : '0°'} 
                 icon={<Activity className="w-4 h-4" />}
               />
               <DetailRow 
                 label="Angle Y" 
-                value={bin.angleY ? `${bin.angleY}°` : '0°'} 
+                value={liveBin.angleY ? `${liveBin.angleY}°` : '0°'} 
                 icon={<Activity className="w-4 h-4" />}
               />
             </div>
@@ -275,15 +432,15 @@ const BinDetails = ({ bin, onClose }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <DetailRow 
                 label="Gas Alert" 
-                value={bin.gas_alert ? 'Active' : 'None'} 
+                value={liveBin.gas_alert ? 'Active' : 'None'} 
                 icon={<Wind className="w-4 h-4" />}
-                status={bin.gas_alert ? 'critical' : 'success'}
+                status={liveBin.gas_alert ? 'critical' : 'success'}
               />
               <DetailRow 
                 label="Fall Detected" 
-                value={bin.fall_detected ? 'Yes - Check bin' : 'No'} 
+                value={liveBin.fall_detected ? 'Yes - Check bin' : 'No'} 
                 icon={<AlertTriangle className="w-4 h-4" />}
-                status={bin.fall_detected ? 'critical' : 'success'}
+                status={liveBin.fall_detected ? 'critical' : 'success'}
               />
               <DetailRow 
                 label="System Status" 
@@ -309,25 +466,113 @@ const BinDetails = ({ bin, onClose }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <DetailRow 
                 label="Last Update" 
-                value={bin.received_at ? new Date(bin.received_at).toLocaleString() : 'Unknown'} 
+                value={liveBin.received_at ? new Date(liveBin.received_at).toLocaleString() : 'Unknown'} 
                 icon={<Clock className="w-4 h-4" />}
               />
               <DetailRow 
                 label="Device Timestamp" 
-                value={bin.timestamp ? new Date(bin.timestamp).toLocaleString() : 'Unknown'} 
+                value={liveBin.timestamp ? new Date(liveBin.timestamp).toLocaleString() : 'Unknown'} 
                 icon={<Clock className="w-4 h-4" />}
               />
               <DetailRow 
                 label="MQTT Topic" 
-                value={bin.topic || 'Not specified'} 
+                value={liveBin.topic || 'Not specified'} 
                 icon={<Info className="w-4 h-4" />}
               />
               <DetailRow 
                 label="Database ID" 
-                value={bin.id || 'Not assigned'} 
+                value={liveBin.id || 'Not assigned'} 
                 icon={<Database className="w-4 h-4" />}
               />
             </div>
+          </div>
+
+          {/* Historical Data Toggle */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center space-x-3">
+                <History className="w-5 h-5 text-gray-600" />
+                <h3 className="text-lg font-semibold text-gray-900">Historical Data</h3>
+              </div>
+              <div className="flex items-center space-x-3">
+                <select
+                  value={dateRange}
+                  onChange={(e) => setDateRange(e.target.value)}
+                  className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="day">Last 24 Hours</option>
+                  <option value="week">Last Week</option>
+                  <option value="month">Last Month</option>
+                </select>
+                <button
+                  onClick={() => setShowHistorical(!showHistorical)}
+                  className="flex items-center space-x-2 p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  {showHistorical ? (
+                    <>
+                      <BarChart3 className="w-4 h-4" />
+                      <span className="text-sm font-medium">Hide Historical Data</span>
+                    </>
+                  ) : (
+                    <>
+                      <LineChartIcon className="w-4 h-4" />
+                      <span className="text-sm font-medium">Show Historical Data</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+            
+            {/* Historical Data Chart */}
+            {showHistorical && (
+              <div className="mt-4">
+                {isLoadingHistorical ? (
+                  <div className="flex items-center justify-center p-8">
+                    <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
+                    <span className="text-gray-600 ml-2">Loading historical data...</span>
+                  </div>
+                ) : historicalData.length > 0 ? (
+                  <div className="bg-white p-4 rounded-lg border border-gray-200">
+                    <h4 className="text-md font-semibold text-gray-900 mb-4">Fill Level History</h4>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={historicalData.map(item => ({
+                        time: new Date(item.received_at).toLocaleTimeString(),
+                        fillLevel: item.fill_percentage
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                        <XAxis 
+                          dataKey="time" 
+                          stroke="#6b7280" 
+                          tick={{ fontSize: 12 }}
+                        />
+                        <YAxis 
+                          stroke="#6b7280" 
+                          tick={{ fontSize: 12 }}
+                          domain={[0, 100]}
+                        />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1f2937', border: 'none' }}
+                          labelStyle={{ color: '#f3f4f6' }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="fillLevel" 
+                          stroke="#3b82f6" 
+                          strokeWidth={2}
+                          dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
+                          activeDot={{ r: 6 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="text-center p-8 text-gray-500">
+                    <Database className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+                    <p>No historical data available</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Quick Actions */}

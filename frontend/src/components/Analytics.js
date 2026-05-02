@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, Gauge, Wind, ArrowLeft, ArrowRight, MapPin, TrendingUp } from 'lucide-react';
-import { createBinUpdatesSource, fetchBinHistory, fetchBins, fetchFillPrediction } from '../services/api';
-import { getBinsByArea, getBinsByDistrict, getBinLocation, getAllBinLocations } from '../data/binLocations';
+import { AlertTriangle, Gauge, Wind, ArrowLeft, ArrowRight, MapPin, TrendingUp, Activity } from 'lucide-react';
+import { createBinUpdatesSource, fetchBinHistory, fetchBins, fetchFillPrediction, fetchLatestHealthData, fetchBinDetails, getBinLocationFromDetails } from '../services/api';
 
 const HISTORY_RANGES = [
   { value: 'day', label: 'Day' },
@@ -343,8 +342,10 @@ const getPredictionTimeFeatures = (timestamp) => {
 
 const Analytics = () => {
   const [bins, setBins] = useState([]);
+  const [binDetails, setBinDetails] = useState([]);
   const [history, setHistory] = useState([]);
   const [predictedSeries, setPredictedSeries] = useState([]);
+  const [healthData, setHealthData] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [historyRange, setHistoryRange] = useState('day');
   const [selectedDate, setSelectedDate] = useState(getTodayInputValue);
@@ -352,9 +353,7 @@ const Analytics = () => {
   const [predictionsLoading, setPredictionsLoading] = useState(false);
   const [predictionError, setPredictionError] = useState('');
   const [error, setError] = useState('');
-  
-  // Independent drill-down chart state
-  const [drillDownLevel, setDrillDownLevel] = useState('district'); // district, area, location
+  const [drillDownLevel, setDrillDownLevel] = useState('overview');
   const [selectedDistrict, setSelectedDistrict] = useState(null);
   const [selectedArea, setSelectedArea] = useState(null);
   const [navigationHistory, setNavigationHistory] = useState([]);
@@ -363,12 +362,54 @@ const Analytics = () => {
   const selectedDeviceRef = useRef('');
   const loadDeviceSeriesRef = useRef(() => {});
 
+  // Helper functions for bin_details data
+  const getBinsByDistrictFromDetails = useMemo(() => {
+    const districts = {};
+    binDetails.forEach(bin => {
+      if (bin.location?.district) {
+        const districtKey = bin.location.district.toLowerCase().replace(/\s+/g, '-');
+        if (!districts[districtKey]) {
+          districts[districtKey] = {
+            name: bin.location.district,
+            areas: new Set()
+          };
+        }
+        if (bin.location?.area) {
+          districts[districtKey].areas.add(bin.location.area);
+        }
+      }
+    });
+    return districts;
+  }, [binDetails]);
+
+  const getBinsByAreaFromDetails = useMemo(() => {
+    const areas = {};
+    binDetails.forEach(bin => {
+      if (bin.location?.area && bin.location?.district) {
+        const areaKey = bin.location.area.toLowerCase().replace(/\s+/g, '-');
+        if (!areas[areaKey]) {
+          areas[areaKey] = {
+            name: bin.location.area,
+            district: bin.location.district
+          };
+        }
+      }
+    });
+    return areas;
+  }, [binDetails]);
+
   const loadLatestData = useCallback(async (showLoading = false) => {
     try {
       if (showLoading) setLoading(true);
       setError('');
-      const latest = await fetchBins();
+      const [latest, healthDataResponse, detailsData] = await Promise.all([
+        fetchBins(),
+        fetchLatestHealthData().catch(() => []), // Health data is optional
+        fetchBinDetails().catch(() => []) // Bin details is optional
+      ]);
       setBins(latest);
+      setHealthData(healthDataResponse);
+      setBinDetails(detailsData);
       setSelectedDevice((current) => current || latest[0]?.device_id || '');
       setSelectedDate((current) => {
         if (userChangedDateRef.current) return current;
@@ -664,12 +705,12 @@ const Analytics = () => {
   const drillDownData = useMemo(() => {
     if (drillDownLevel === 'district') {
       // Show district-level average fill rates
-      const binsByDistrict = getBinsByDistrict();
+      const binsByDistrict = getBinsByDistrictFromDetails;
       const districtData = [];
 
       Object.entries(binsByDistrict).forEach(([districtKey, districtInfo]) => {
         const districtBins = bins.filter(bin => {
-          const location = getBinLocation(bin.device_id);
+          const location = getBinLocationFromDetails(bin.device_id, binDetails);
           return location && location.district === districtInfo.name;
         });
 
@@ -688,13 +729,13 @@ const Analytics = () => {
       return districtData.sort((a, b) => b.avgFillRate - a.avgFillRate);
     } else if (drillDownLevel === 'area' && selectedDistrict) {
       // Show area-level average fill rates for selected district
-      const binsByArea = getBinsByArea();
+      const binsByArea = getBinsByAreaFromDetails;
       const areaData = [];
 
       Object.entries(binsByArea).forEach(([areaKey, areaInfo]) => {
         if (areaInfo.district === selectedDistrict.districtData.name) {
           const areaBins = bins.filter(bin => {
-            const location = getBinLocation(bin.device_id);
+            const location = getBinLocationFromDetails(bin.device_id, binDetails);
             return location && location.area === areaInfo.name;
           });
 
@@ -714,19 +755,18 @@ const Analytics = () => {
       return areaData.sort((a, b) => b.avgFillRate - a.avgFillRate);
     } else if (drillDownLevel === 'location' && selectedArea) {
       // Show location-level average fill rates for selected area
-      const allLocations = getAllBinLocations();
       const locationData = [];
 
-      allLocations.forEach(location => {
-        if (location.area === selectedArea.areaData.name) {
-          const locationBin = bins.find(bin => bin.device_id === location.device_id);
+      binDetails.forEach(bin => {
+        if (bin.location?.area === selectedArea.areaData.name) {
+          const locationBin = bins.find(binData => binData.device_id === bin.device_id);
           if (locationBin) {
             locationData.push({
-              name: location.name,
+              name: bin.location?.name || 'Unknown Location',
               avgFillRate: locationBin.fill_percentage,
               binCount: 1,
-              deviceId: location.device_id,
-              locationData: location
+              deviceId: bin.device_id,
+              locationData: bin
             });
           }
         }

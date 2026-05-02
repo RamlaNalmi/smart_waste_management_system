@@ -16,21 +16,27 @@ import {
   Truck
 } from 'lucide-react';
 import BinStatusTable from './BinStatusTable';
-import { fetchBins } from '../services/api';
-import { getBinLocation } from '../data/binLocations';
+import BinRegistrationForm from './BinRegistrationForm';
+import { fetchBins, fetchBinDetails, getBinLocationFromDetails } from '../services/api';
 
 const BinOverview = () => {
   const [bins, setBins] = useState([]);
+  const [binDetails, setBinDetails] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState(new Date());
+  const [showAddBinForm, setShowAddBinForm] = useState(false); // State for controlling bin registration form modal
 
   const loadBins = async (showLoading = false) => {
     try {
       if (showLoading) setLoading(true);
       setError('');
-      const readings = await fetchBins();
-      setBins(readings);
+      const [sensorData, detailsData] = await Promise.all([
+        fetchBins(),
+        fetchBinDetails().catch(() => []) // Bin details is optional
+      ]);
+      setBins(sensorData);
+      setBinDetails(detailsData);
       setLastUpdate(new Date());
     } catch (err) {
       setError(err.message);
@@ -63,24 +69,24 @@ const BinOverview = () => {
     const gasAlerts = bins.filter((reading) => reading.gas_alert).length;
     const fallDetected = bins.filter((reading) => reading.fall_detected).length;
     
-    // Weight calculations
+    // Weight calculations using bin details data
     const totalWeight = bins.reduce((sum, bin) => {
-      const location = getBinLocation(bin.device_id);
+      const location = getBinLocationFromDetails(bin.device_id, binDetails);
       const currentWeight = bin.current_weight || Math.round((bin.fill_percentage / 100) * (location?.max_weight || 500));
       return sum + currentWeight;
     }, 0);
     
-    // Waste type distribution
+    // Waste type distribution using bin details data
     const organicBins = bins.filter(bin => {
-      const location = getBinLocation(bin.device_id);
+      const location = getBinLocationFromDetails(bin.device_id, binDetails);
       return location?.waste_type === 'Organic (Bio-Degradable) Waste';
     }).length;
     const recyclableBins = bins.filter(bin => {
-      const location = getBinLocation(bin.device_id);
+      const location = getBinLocationFromDetails(bin.device_id, binDetails);
       return location?.waste_type === 'Recyclable Waste';
     }).length;
     const nonRecyclableBins = bins.filter(bin => {
-      const location = getBinLocation(bin.device_id);
+      const location = getBinLocationFromDetails(bin.device_id, binDetails);
       return location?.waste_type === 'Non-recyclable Waste';
     }).length;
 
@@ -131,6 +137,11 @@ const BinOverview = () => {
     document.body.removeChild(a);
   };
 
+  const handleBinRegistrationSuccess = () => {
+    // Refresh the bins data after successful registration
+    loadBins(true);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       {/* Enhanced Header */}
@@ -156,8 +167,16 @@ const BinOverview = () => {
               </div>
             </div>
             
-            {/* Status Info */}
+            {/* Header Actions */}
             <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setShowAddBinForm(true)}
+                className="flex items-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:from-green-700 hover:to-emerald-700 transition-all duration-200 shadow-lg hover:shadow-xl"
+              >
+                <Package className="w-4 h-4" />
+                <span className="font-medium">Add New Bin</span>
+              </button>
+              
               <div className="flex items-center space-x-2 text-sm text-gray-500 bg-gray-50 px-3 py-2 rounded-lg">
                 <Activity className="w-4 h-4" />
                 <span className="font-medium">{lastUpdate.toLocaleTimeString()}</span>
@@ -218,9 +237,17 @@ const BinOverview = () => {
 
           {/* Enhanced Bin Status Table */}
           <div className="bg-white rounded-2xl shadow-lg border border-gray-200">
-            <BinStatusTable data={bins} />
+            <BinStatusTable limit={5} binDetails={binDetails} sensorData={bins} />
           </div>
         </div>
+      )}
+      
+      {/* Bin Registration Form Modal */}
+      {showAddBinForm && (
+        <BinRegistrationForm
+          onClose={() => setShowAddBinForm(false)}
+          onSuccess={handleBinRegistrationSuccess}
+        />
       )}
     </div>
   );

@@ -4,9 +4,9 @@ import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
 import BinStatusTable from './BinStatusTable';
 import RecentAlerts from './RecentAlerts';
 import MiniMap from './MiniMap';
+import HealthStatus from './HealthStatus';
 import { useAuth } from '../contexts/AuthContext';
-import { fetchBins, fetchAlerts } from '../services/api';
-import { getBinLocation, getBinsByDistrict } from '../data/binLocations';
+import { fetchBins, fetchAlerts, fetchLatestHealthData, fetchBinDetails, getBinLocationFromDetails } from '../services/api';
 
 const COLORS = {
   primary: '#6366f1',
@@ -119,7 +119,9 @@ const KPICard = ({ title, value, icon: Icon, color, unit = '', trend = null, sub
 const Dashboard = () => {
   const { user } = useAuth();
   const [bins, setBins] = useState([]);
+  const [binDetails, setBinDetails] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [healthData, setHealthData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState(new Date());
@@ -144,9 +146,16 @@ const Dashboard = () => {
     try {
       if (showLoading) setLoading(true);
       setError('');
-      const [binsData, alertsData] = await Promise.all([fetchBins(), fetchAlerts()]);
+      const [binsData, alertsData, healthDataResponse, detailsData] = await Promise.all([
+        fetchBins(), 
+        fetchAlerts(),
+        fetchLatestHealthData().catch(() => []), // Health data is optional
+        fetchBinDetails().catch(() => []) // Bin details is optional
+      ]);
       setBins(binsData);
       setAlerts(alertsData);
+      setHealthData(healthDataResponse);
+      setBinDetails(detailsData);
       setLastUpdate(new Date());
     } catch (err) {
       setError(err.message);
@@ -157,7 +166,7 @@ const Dashboard = () => {
 
   const binsWithLocations = useMemo(() => {
     return bins.map(bin => {
-      const location = getBinLocation(bin.device_id);
+      const location = getBinLocationFromDetails(bin.device_id, binDetails);
       const binData = {
         ...bin,
         location: location || {
@@ -184,7 +193,7 @@ const Dashboard = () => {
       };
       return binData;
     });
-  }, [bins]);
+  }, [bins, binDetails]);
 
   const metrics = useMemo(() => {
     const total = bins.length;
@@ -205,6 +214,13 @@ const Dashboard = () => {
     const organicBins = binsWithLocations.filter(bin => bin.waste_type === 'Organic (Bio-Degradable) Waste').length;
     const recyclableBins = binsWithLocations.filter(bin => bin.waste_type === 'Recyclable Waste').length;
     const nonRecyclableBins = binsWithLocations.filter(bin => bin.waste_type === 'Non-recyclable Waste').length;
+    
+    // Health metrics
+    const healthyDevices = healthData.filter(device => device.healthStatus === 'healthy').length;
+    const warningDevices = healthData.filter(device => device.healthStatus === 'warning').length;
+    const criticalDevices = healthData.filter(device => device.healthStatus === 'critical').length;
+    const totalHealthDevices = healthData.length;
+    const deviceHealthScore = totalHealthDevices > 0 ? Math.round(((healthyDevices * 100) + (warningDevices * 50)) / totalHealthDevices) : 0;
 
     return {
       total,
@@ -222,9 +238,15 @@ const Dashboard = () => {
       totalWeight,
       organicBins,
       recyclableBins,
-      nonRecyclableBins
+      nonRecyclableBins,
+      // Health metrics
+      healthyDevices,
+      warningDevices,
+      criticalDevices,
+      totalHealthDevices,
+      deviceHealthScore
     };
-  }, [bins, alerts, binsWithLocations]);
+  }, [bins, alerts, binsWithLocations, healthData]);
 
   useEffect(() => {
     loadBins(true);
@@ -239,7 +261,19 @@ const Dashboard = () => {
   }, [metrics.critical, playAlertSound]);
 
   const districtMetrics = useMemo(() => {
-    const districts = getBinsByDistrict();
+    // Create districts from binDetails data
+    const districts = {};
+    binDetails.forEach(bin => {
+      if (bin.location?.district) {
+        const districtKey = bin.location.district.toLowerCase().replace(/\s+/g, '-');
+        if (!districts[districtKey]) {
+          districts[districtKey] = {
+            name: bin.location.district
+          };
+        }
+      }
+    });
+    
     const result = {};
     
     Object.keys(districts).forEach(districtKey => {
@@ -258,7 +292,7 @@ const Dashboard = () => {
     });
     
     return result;
-  }, [binsWithLocations]);
+  }, [binsWithLocations, binDetails]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
@@ -1045,11 +1079,16 @@ const Dashboard = () => {
           {/* Detailed Tables */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-              <BinStatusTable limit={5} data={bins} />
+              <BinStatusTable limit={5} binDetails={binDetails} sensorData={bins} />
             </div>
             <div className="bg-white rounded-xl shadow-sm border border-gray-200">
               <RecentAlerts limit={5} />
             </div>
+          </div>
+
+          {/* Health Status Section */}
+          <div className="grid grid-cols-1 gap-6">
+            <HealthStatus />
           </div>
 
           {/* Advanced Analytics Section */}
