@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, Gauge, Wind } from 'lucide-react';
+import { AlertTriangle, Gauge, Wind, ArrowLeft, ArrowRight, MapPin, TrendingUp } from 'lucide-react';
 import { createBinUpdatesSource, fetchBinHistory, fetchBins, fetchFillPrediction } from '../services/api';
+import { getBinsByArea, getBinsByDistrict, getBinLocation, getAllBinLocations } from '../data/binLocations';
 
 const HISTORY_RANGES = [
   { value: 'day', label: 'Day' },
@@ -351,6 +352,13 @@ const Analytics = () => {
   const [predictionsLoading, setPredictionsLoading] = useState(false);
   const [predictionError, setPredictionError] = useState('');
   const [error, setError] = useState('');
+  
+  // Independent drill-down chart state
+  const [drillDownLevel, setDrillDownLevel] = useState('district'); // district, area, location
+  const [selectedDistrict, setSelectedDistrict] = useState(null);
+  const [selectedArea, setSelectedArea] = useState(null);
+  const [navigationHistory, setNavigationHistory] = useState([]);
+  
   const userChangedDateRef = useRef(false);
   const selectedDeviceRef = useRef('');
   const loadDeviceSeriesRef = useRef(() => {});
@@ -652,6 +660,139 @@ const Analytics = () => {
     };
   }, [createPredictionPayload, history, historyRange, selectedDate, selectedDevice]);
 
+  // Independent drill-down chart data
+  const drillDownData = useMemo(() => {
+    if (drillDownLevel === 'district') {
+      // Show district-level average fill rates
+      const binsByDistrict = getBinsByDistrict();
+      const districtData = [];
+
+      Object.entries(binsByDistrict).forEach(([districtKey, districtInfo]) => {
+        const districtBins = bins.filter(bin => {
+          const location = getBinLocation(bin.device_id);
+          return location && location.district === districtInfo.name;
+        });
+
+        if (districtBins.length > 0) {
+          const avgFillRate = districtBins.reduce((sum, bin) => sum + bin.fill_percentage, 0) / districtBins.length;
+          districtData.push({
+            name: districtInfo.name,
+            avgFillRate: Math.round(avgFillRate),
+            binCount: districtBins.length,
+            districtKey,
+            districtData: districtInfo
+          });
+        }
+      });
+
+      return districtData.sort((a, b) => b.avgFillRate - a.avgFillRate);
+    } else if (drillDownLevel === 'area' && selectedDistrict) {
+      // Show area-level average fill rates for selected district
+      const binsByArea = getBinsByArea();
+      const areaData = [];
+
+      Object.entries(binsByArea).forEach(([areaKey, areaInfo]) => {
+        if (areaInfo.district === selectedDistrict.districtData.name) {
+          const areaBins = bins.filter(bin => {
+            const location = getBinLocation(bin.device_id);
+            return location && location.area === areaInfo.name;
+          });
+
+          if (areaBins.length > 0) {
+            const avgFillRate = areaBins.reduce((sum, bin) => sum + bin.fill_percentage, 0) / areaBins.length;
+            areaData.push({
+              name: areaInfo.name,
+              avgFillRate: Math.round(avgFillRate),
+              binCount: areaBins.length,
+              areaKey,
+              areaData: areaInfo
+            });
+          }
+        }
+      });
+
+      return areaData.sort((a, b) => b.avgFillRate - a.avgFillRate);
+    } else if (drillDownLevel === 'location' && selectedArea) {
+      // Show location-level average fill rates for selected area
+      const allLocations = getAllBinLocations();
+      const locationData = [];
+
+      allLocations.forEach(location => {
+        if (location.area === selectedArea.areaData.name) {
+          const locationBin = bins.find(bin => bin.device_id === location.device_id);
+          if (locationBin) {
+            locationData.push({
+              name: location.name,
+              avgFillRate: locationBin.fill_percentage,
+              binCount: 1,
+              deviceId: location.device_id,
+              locationData: location
+            });
+          }
+        }
+      });
+
+      return locationData.sort((a, b) => b.avgFillRate - a.avgFillRate);
+    }
+    return [];
+  }, [bins, drillDownLevel, selectedDistrict, selectedArea]);
+
+  // Drill-down navigation functions
+  const handleDistrictClick = (data) => {
+    if (data && data.districtData) {
+      setNavigationHistory([...navigationHistory, { level: drillDownLevel, data: selectedDistrict }]);
+      setSelectedDistrict(data);
+      setSelectedArea(null);
+      setDrillDownLevel('area');
+    }
+  };
+
+  const handleAreaClick = (data) => {
+    if (data && data.areaData) {
+      setNavigationHistory([...navigationHistory, { level: drillDownLevel, data: selectedDistrict }]);
+      setSelectedArea(data);
+      setDrillDownLevel('location');
+    }
+  };
+
+  const handleLocationClick = (data) => {
+    // Could navigate to device details if needed
+    console.log('Location clicked:', data);
+  };
+
+  const handleDrillDownClick = (data) => {
+    if (drillDownLevel === 'district') {
+      handleDistrictClick(data);
+    } else if (drillDownLevel === 'area') {
+      handleAreaClick(data);
+    } else if (drillDownLevel === 'location') {
+      handleLocationClick(data);
+    }
+  };
+
+  const handleNavigateBack = () => {
+    if (navigationHistory.length > 0) {
+      const previousState = navigationHistory[navigationHistory.length - 1];
+      setNavigationHistory(navigationHistory.slice(0, -1));
+      setDrillDownLevel(previousState.level);
+      
+      if (previousState.level === 'district') {
+        setSelectedDistrict(null);
+        setSelectedArea(null);
+      } else if (previousState.level === 'area') {
+        setSelectedDistrict(previousState.data);
+        setSelectedArea(null);
+      }
+    }
+  };
+
+  const handleNavigateToTop = () => {
+    setNavigationHistory([]);
+    setDrillDownLevel('district');
+    setSelectedDistrict(null);
+    setSelectedArea(null);
+  };
+
   const latestChartData = useMemo(
     () => bins.map((reading) => ({
       device: reading.device_id,
@@ -876,18 +1017,12 @@ const Analytics = () => {
       )}
       {loading && <div className="text-sm text-grey">Loading readings from database...</div>}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <MetricCard
           label="Average Current Fill"
           value={`${bins.length ? Math.round(bins.reduce((sum, reading) => sum + reading.fill_percentage, 0) / bins.length) : 0}%`}
           icon={<Gauge className="w-5 h-5 text-white" />}
           color="bg-steel-blue"
-        />
-        <MetricCard
-          label="Average Bin Weight"
-          value={`${bins.filter((reading) => reading.bin_weight !== null).length ? Number((bins.reduce((sum, reading) => sum + (reading.bin_weight ?? 0), 0) / bins.filter((reading) => reading.bin_weight !== null).length).toFixed(1)) : 0} kg`}
-          icon={<Gauge className="w-5 h-5 text-white" />}
-          color="bg-healthy"
         />
         <MetricCard
           label="Current Gas Alerts"
@@ -901,6 +1036,105 @@ const Analytics = () => {
           icon={<AlertTriangle className="w-5 h-5 text-white" />}
           color="bg-critical"
         />
+      </div>
+
+      {/* Independent Drill-Down Chart for Average Fill Rate */}
+      <div className="bg-white rounded-lg shadow-card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+          <div>
+            <h3 className="text-lg font-semibold text-dark-blue flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-purple-600" />
+              Average Fill Rate Analytics
+            </h3>
+            <p className="text-sm text-grey mt-1">
+              {drillDownLevel === 'district' && 'Click on any district to explore its areas'}
+              {drillDownLevel === 'area' && `Areas in ${selectedDistrict?.districtData.name || 'Selected District'} - Click to explore locations`}
+              {drillDownLevel === 'location' && `Locations in ${selectedArea?.areaData.name || 'Selected Area'}`}
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleNavigateBack}
+              disabled={drillDownLevel === 'district'}
+              className="flex items-center gap-1 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
+            </button>
+            <button
+              onClick={handleNavigateToTop}
+              disabled={drillDownLevel === 'district'}
+              className="flex items-center gap-1 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+            >
+              <MapPin className="w-4 h-4" />
+              <span>Districts</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2 text-sm">
+            <div className="w-3 h-3 rounded-full bg-purple-500"></div>
+            <span className="text-gray-600">
+              {drillDownLevel === 'district' && 'District Level'}
+              {drillDownLevel === 'area' && `Area Level in ${selectedDistrict?.districtData.name}`}
+              {drillDownLevel === 'location' && `Location Level in ${selectedArea?.areaData.name}`}
+            </span>
+          </div>
+          <div className="text-sm text-gray-500">
+            {drillDownData.length} {drillDownLevel === 'district' ? 'districts' : drillDownLevel === 'area' ? 'areas' : 'locations'}
+          </div>
+        </div>
+
+        <ResponsiveContainer width="100%" height={350}>
+          <BarChart 
+            data={drillDownData} 
+            onClick={(data) => data && data.activePayload && handleDrillDownClick(data.activePayload[0].payload)}
+            margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#f8f9fa" />
+            <XAxis 
+              dataKey="name" 
+              tick={{ fontSize: 12, fill: '#6b7280' }}
+              angle={-45}
+              textAnchor="end"
+              height={80}
+            />
+            <YAxis 
+              tick={{ fontSize: 12, fill: '#6b7280' }}
+              label={{ value: 'Average Fill Rate (%)', angle: -90, position: 'insideLeft', style: { fill: '#6b7280' } }}
+            />
+            <Tooltip 
+              contentStyle={{ 
+                backgroundColor: '#ffffff', 
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+              }}
+              formatter={(value, name) => [
+                `${value}%`, 
+                name === 'avgFillRate' ? 'Avg Fill Rate' : name
+              ]}
+            />
+            <Bar 
+              dataKey="avgFillRate" 
+              name="Average Fill Rate"
+              fill={drillDownLevel === 'district' ? '#8b5cf6' : drillDownLevel === 'area' ? '#6366f1' : '#3b82f6'}
+              radius={[8, 8, 0, 0]}
+              cursor={drillDownLevel !== 'location'}
+              maxBarSize={60}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+        
+        {drillDownLevel !== 'district' && (
+          <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+            <p className="text-sm text-blue-800">
+              <span className="font-medium">Tip:</span> Click on any bar to drill down deeper into the hierarchy.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow-card p-6">
