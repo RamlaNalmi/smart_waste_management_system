@@ -4,7 +4,6 @@ const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const ChatMessage = require('../models/ChatMessage');
 const BinRegistration = require('../models/BinRegistration');
-const { predictFillLevel } = require('../services/fillLevelPrediction');
 const { buildConditionAlerts, normalizeBinRecord } = require('../utils/binHelpers');
 const { getSensorCollection } = require('../utils/sensorCollection');
 
@@ -118,23 +117,6 @@ const parseTargetTimestamp = (message) => {
   return target;
 };
 
-const getLagFeatures = (fillHistory) => {
-  const values = fillHistory.filter(Number.isFinite);
-  const current = values.at(-1) ?? 50;
-  const lag1 = values.at(-2) ?? current;
-  const lag2 = values.at(-3) ?? lag1;
-  const lag3 = values.at(-4) ?? lag2;
-
-  return {
-    fill_level: current,
-    lag_1: lag1,
-    lag_2: lag2,
-    lag_3: lag3,
-    rolling_mean_3: (lag1 + lag2 + lag3) / 3,
-    fill_diff: current - lag1
-  };
-};
-
 const formatTargetTime = (timestamp) =>
   timestamp.toLocaleString([], {
     month: 'short',
@@ -154,6 +136,16 @@ const getCollectionPriority = (predictedFill) => {
   if (predictedFill >= 80) return 'High priority';
   if (predictedFill >= 70) return 'Schedule soon';
   return 'Monitor';
+};
+
+const getStoredPredictedFill = (reading) => {
+  const value = Number(reading.predicted_next_fill ?? reading.predicted_fill ?? reading.predictedFill);
+  return Number.isFinite(value) ? value : null;
+};
+
+const getRecommendedAction = (predictedFill) => {
+  if (predictedFill == null) return 'Prediction not available in database';
+  return getCollectionPriority(predictedFill);
 };
 
 const getTrendDirection = (values = []) => {
@@ -298,7 +290,7 @@ Rules:
 - Never return raw JSON.
 - Return only information relevant to the user's question.
 - Use the provided dataset context only. Do not invent bins, locations, values, predictions, or routes.
-- If the user asks for a prediction, explain that exact predictions are handled by the ML prediction tool when a device and time are provided.
+- If the user asks for a prediction, use the stored ESP32 prediction fields from the database.
 - For dashboard guidance, mention the relevant page: Dashboard, Database Readings, Map View, Analytics, Alerts, Reports, or Chat.
 - For decisions, prioritize fill percentage, fill status, gas alert, fall detection, bin weight, recent fill trend, and location.
 
@@ -347,7 +339,7 @@ const buildDeterministicAnswer = async (intent, data, message) => {
       return [
         'I can help you with:',
         '- Answer dataset questions about fill level, gas, weight, fall detection, alerts, and locations.',
-        '- Predict a bin fill level for a selected device and time using the ML model.',
+        '- Read predicted bin fill levels stored by ESP32 in MongoDB.',
         '- Compare bins by fill level, status, gas, weight, or collection priority.',
         '- Explain recent trends in the Analytics charts.',
         '- Identify anomalies such as high fill, gas alerts, falls, or unusual readings.',
@@ -368,27 +360,17 @@ const buildDeterministicAnswer = async (intent, data, message) => {
           return tomorrowMorning;
         })();
 
-        const predictedBins = await Promise.all(
-          readings.map(async (reading) => {
-            try {
-              const prediction = await predictFillLevel({
-                device_id: reading.device_id,
-                timestamp: planningTimestamp.toISOString(),
-                ...getLagFeatures(data.fillHistoryByDevice[reading.device_id] || [reading.fill_percentage])
-              }, reading);
+        const predictedBins = readings.map((reading) => {
+          const predictedFill = getStoredPredictedFill(reading);
+          if (predictedFill == null) return null;
 
-              const predictedFill = Number(prediction.predictedFillPercentage) || 0;
-              return {
-                device_id: reading.device_id,
-                location: reading.location || 'location not registered',
-                predictedFill,
-                priority: getCollectionPriority(predictedFill)
-              };
-            } catch {
-              return null;
-            }
-          })
-        );
+          return {
+            device_id: reading.device_id,
+            location: reading.location || 'location not registered',
+            predictedFill,
+            priority: getCollectionPriority(predictedFill)
+          };
+        });
 
         const actionableBins = predictedBins
           .filter(Boolean)
@@ -412,24 +394,12 @@ const buildDeterministicAnswer = async (intent, data, message) => {
       const reading = readings.find((item) => item.device_id.toLowerCase() === deviceId.toLowerCase());
       if (!reading) return `No current reading found for ${deviceId}.`;
 
-      if (!targetTimestamp) return `Please include the prediction time for ${reading.device_id}.`;
+      const predictedFill = getStoredPredictedFill(reading);
+      if (predictedFill == null) return `Prediction unavailable for ${reading.device_id}: no predicted_next_fill value found in the database.`;
 
-      let prediction;
-
-      try {
-        prediction = await predictFillLevel({
-          device_id: reading.device_id,
-          timestamp: targetTimestamp.toISOString(),
-          ...getLagFeatures(data.fillHistoryByDevice[reading.device_id] || [reading.fill_percentage])
-        }, reading);
-      } catch (error) {
-        return `Prediction unavailable for ${reading.device_id}: ${error.message}`;
-      }
-
-      const predictedFill = prediction.predictedFillPercentage;
       const fillStatus = getFillStatus(predictedFill);
 
-      return `${reading.device_id} is predicted to be ${predictedFill}% full at ${formatTargetTime(targetTimestamp)}. Fill status: ${fillStatus}. Recommended action: ${prediction.recommendedAction}.`;
+      return `${reading.device_id} is predicted to be ${predictedFill}% full based on the latest ESP32 database reading. Fill status: ${fillStatus}. Recommended action: ${getRecommendedAction(predictedFill)}.`;
     }
 
     case 'system_status':
@@ -490,13 +460,10 @@ const buildDeterministicAnswer = async (intent, data, message) => {
 
     case 'decision_factors':
       return [
-        'Main factors used for fill prediction:',
-        '- Current fill level',
-        '- Recent fill history: lag_1, lag_2, lag_3',
-        '- Rolling mean of the last 3 readings',
-        '- Fill difference from the previous reading',
-        '- Time features: hour, day of week, day of month, month',
-        '- Bin/device ID'
+        'Fill prediction is now produced on the ESP32 and stored in MongoDB.',
+        '- The backend reads predicted_next_fill from the latest sensor reading.',
+        '- The dashboard uses stored prediction values from the selected history window.',
+        '- The backend no longer runs the local Python prediction model.'
       ].join('\n');
 
     case 'alert_summary':

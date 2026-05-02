@@ -3,6 +3,25 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const toBoolean = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'y', 'alert', 'fallen', 'detected'].includes(normalized);
+  }
+  return Boolean(value);
+};
+
+const getFallDetected = (reading) => toBoolean(
+  reading.fall_detected ??
+  reading.fallen ??
+  reading.fall_alert ??
+  reading.fallAlert ??
+  reading.tilt_alert ??
+  reading.tiltAlert
+);
+
 const getDeviceId = (reading) => reading.device_id || '';
 
 const getFillPercentage = (reading) => Math.max(
@@ -14,6 +33,12 @@ const getBinWeight = (reading) => {
   const value = reading.bin_weight ?? reading.weight ?? reading.binWeight;
   if (value === undefined || value === null || value === '') return null;
   return toNumber(value, null);
+};
+
+const getPredictedFill = (reading) => {
+  const value = reading.predicted_next_fill ?? reading.predicted_fill ?? reading.predictedFill;
+  if (value === undefined || value === null || value === '') return null;
+  return Math.max(0, Math.min(100, toNumber(value, null)));
 };
 
 const getReceivedAt = (reading) => reading.received_at || reading.timestamp || reading.updatedAt || reading.createdAt || new Date();
@@ -55,10 +80,12 @@ const normalizeBinRecord = (reading) => {
 
   record.gas = reading.gas === undefined ? null : toNumber(reading.gas);
   record.bin_weight = getBinWeight(reading);
-  record.gas_alert = Boolean(reading.gas_alert);
+  record.predicted_next_fill = getPredictedFill(reading);
+  record.predicted_fill_status = reading.predicted_fill_status || null;
+  record.gas_alert = toBoolean(reading.gas_alert);
   record.angleX = reading.angleX === undefined ? null : toNumber(reading.angleX);
   record.angleY = reading.angleY === undefined ? null : toNumber(reading.angleY);
-  record.fall_detected = Boolean(reading.fall_detected);
+  record.fall_detected = getFallDetected(reading);
 
   return record;
 };

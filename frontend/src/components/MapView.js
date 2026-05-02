@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import L from 'leaflet';
-import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet';
-import { Gauge, MapPin, Scale, Trash2, Wind } from 'lucide-react';
+import { MapContainer, Marker, Polyline, Popup, TileLayer } from 'react-leaflet';
+import { Gauge, MapPin, Navigation, Scale, Trash2, Wind } from 'lucide-react';
 import { createBinUpdatesSource, fetchBins, fetchRegisteredBins } from '../services/api';
 import 'leaflet/dist/leaflet.css';
 
@@ -53,10 +53,78 @@ const createBinIcon = (fillLevel) => {
   });
 };
 
+const isValidCoordinate = (bin) => (
+  Array.isArray(bin.coordinates) &&
+  bin.coordinates.length === 2 &&
+  bin.coordinates.every((value) => Number.isFinite(Number(value)))
+);
+
+const getPriorityBand = (bin) => {
+  if (bin.fill_percentage >= 90) return 3;
+  if (bin.fill_percentage >= 80) return 2;
+  if (bin.fill_percentage >= 70) return 1;
+  return 0;
+};
+
+const getPriorityLabel = (bin) => {
+  if (bin.fill_percentage >= 90) return 'Immediate';
+  if (bin.fill_percentage >= 80) return 'High';
+  return 'Soon';
+};
+
+const buildPriorityStops = (bins) => {
+  return bins
+    .filter((bin) => isValidCoordinate(bin) && bin.fill_percentage >= 70)
+    .sort((first, second) => (
+      getPriorityBand(second) - getPriorityBand(first) ||
+      second.fill_percentage - first.fill_percentage ||
+      String(first.device_id).localeCompare(String(second.device_id))
+    ))
+    .map((bin, index) => ({
+      ...bin,
+      routeOrder: index + 1,
+      priorityLabel: getPriorityLabel(bin),
+      routeDistanceFromPrevious: null
+    }));
+};
+
+const formatOsrmCoordinate = ([latitude, longitude]) => (
+  `${Number(longitude).toFixed(6)},${Number(latitude).toFixed(6)}`
+);
+
+const getRoadRoute = async (startPoint, stops) => {
+  const osrmCoordinates = [startPoint, ...stops.map((bin) => bin.coordinates)]
+    .map(formatOsrmCoordinate)
+    .join(';');
+  const response = await fetch(
+    `https://router.project-osrm.org/route/v1/driving/${osrmCoordinates}?overview=full&geometries=geojson&steps=false`
+  );
+
+  if (!response.ok) {
+    throw new Error('Road route service is not available right now');
+  }
+
+  const data = await response.json();
+  const route = data.routes?.[0];
+
+  if (!route) {
+    throw new Error('Could not calculate a road route for these bins');
+  }
+
+  return {
+    distanceMeters: route.distance || 0,
+    geometry: (route.geometry?.coordinates || []).map(([longitude, latitude]) => [latitude, longitude]),
+    legs: route.legs || []
+  };
+};
+
 const MapView = () => {
   const [bins, setBins] = useState([]);
   const [selectedBin, setSelectedBin] = useState(null);
   const [error, setError] = useState('');
+  const [routePlan, setRoutePlan] = useState(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState('');
 
   useEffect(() => {
     const loadBins = async () => {
@@ -151,6 +219,43 @@ const MapView = () => {
     return counts;
   }, {}), [bins]);
 
+  const routeCandidates = useMemo(() => buildPriorityStops(bins), [bins]);
+
+  const routePositions = useMemo(() => (
+    routePlan?.geometry?.length ? routePlan.geometry : []
+  ), [routePlan]);
+
+  const optimizedRoute = routePlan?.stops || [];
+  const routeDistanceKm = (routePlan?.distanceMeters || 0) / 1000;
+
+  const handleOptimizeRoute = useCallback(async () => {
+    try {
+      setRouteError('');
+      setRoutePlan(null);
+
+      if (!routeCandidates.length) {
+        setRouteError('No bins are currently at or above 70% fill, so no collection route is needed.');
+        return;
+      }
+
+      setRouteLoading(true);
+      const roadRoute = await getRoadRoute(center, routeCandidates);
+      const stopsWithRoadDistances = routeCandidates.map((bin, index) => ({
+        ...bin,
+        routeDistanceFromPrevious: (roadRoute.legs[index]?.distance || 0) / 1000
+      }));
+
+      setRoutePlan({
+        ...roadRoute,
+        stops: stopsWithRoadDistances
+      });
+    } catch (err) {
+      setRouteError(err.message);
+    } finally {
+      setRouteLoading(false);
+    }
+  }, [center, routeCandidates]);
+
   return (
     <div className="p-6 space-y-4">
       <div>
@@ -172,6 +277,18 @@ const MapView = () => {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+
+            {routePositions.length > 1 && (
+              <Polyline
+                positions={routePositions}
+                pathOptions={{
+                  color: '#2563EB',
+                  weight: 5,
+                  opacity: 0.8,
+                  dashArray: '10 8'
+                }}
+              />
+            )}
 
             {bins.map((bin) => (
               <Marker
@@ -196,6 +313,96 @@ const MapView = () => {
           <p className="text-sm text-grey">No registered bins yet. Add one from Bin Overview to show it on the map.</p>
         </div>
       )}
+
+      <div className="bg-white rounded-lg shadow-card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+          <div>
+            <h3 className="text-lg font-semibold text-dark-blue flex items-center gap-2">
+              <Navigation className="w-5 h-5 text-steel-blue" />
+              Route Optimisation
+            </h3>
+            <p className="text-sm text-grey mt-1">Collection order prioritises high fill bins and draws the route on roads using driving distance.</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleOptimizeRoute}
+              disabled={routeLoading}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-steel-blue px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-dark-blue disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Navigation className="w-4 h-4" />
+              {routeLoading ? 'Optimising...' : 'Optimize route'}
+            </button>
+            <div className="rounded-lg border border-gray-200 px-4 py-2 text-sm">
+              <span className="text-grey">Stops</span>
+              <span className="ml-2 font-bold text-dark-blue">{routePlan ? optimizedRoute.length : routeCandidates.length}</span>
+            </div>
+            <div className="rounded-lg border border-gray-200 px-4 py-2 text-sm">
+              <span className="text-grey">Road distance</span>
+              <span className="ml-2 font-bold text-dark-blue">{routePlan ? `${routeDistanceKm.toFixed(2)} km` : '-'}</span>
+            </div>
+          </div>
+        </div>
+
+        {routeError && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {routeError}
+          </div>
+        )}
+
+        {optimizedRoute.length ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {optimizedRoute.map((bin) => {
+              const fillLevel = getFillLevel(bin);
+              const fillStyle = FILL_LEVEL_STYLES[fillLevel] || FILL_LEVEL_STYLES.unknown;
+
+              return (
+                <button
+                  key={bin.id || bin.device_id}
+                  type="button"
+                  onClick={() => setSelectedBin(bin)}
+                  className="text-left rounded-lg border border-gray-200 p-4 hover:border-steel-blue hover:shadow-md transition-all"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="h-8 w-8 rounded-full bg-steel-blue text-white flex items-center justify-center text-sm font-bold">
+                        {bin.routeOrder}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-dark-blue">{bin.device_id}</div>
+                        <div className="text-sm text-grey">{bin.address || 'Location unavailable'}</div>
+                      </div>
+                    </div>
+                    <span className="rounded-full px-2.5 py-1 text-xs font-semibold text-white" style={{ backgroundColor: fillStyle.color }}>
+                      {bin.priorityLabel}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <div className="text-grey">Fill</div>
+                      <div className="font-bold text-dark-blue">{bin.fill_percentage}%</div>
+                    </div>
+                    <div>
+                      <div className="text-grey">Gas</div>
+                      <div className="font-bold text-dark-blue">{Number.isFinite(bin.gas) ? bin.gas : '-'}</div>
+                    </div>
+                    <div>
+                      <div className="text-grey">From prev.</div>
+                      <div className="font-bold text-dark-blue">{Number(bin.routeDistanceFromPrevious || 0).toFixed(2)} km</div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            {routeCandidates.length
+              ? 'Click Optimize route to calculate the road route for high-fill bins.'
+              : 'No bins are currently at or above 70% fill, so no collection route is needed.'}
+          </div>
+        )}
+      </div>
 
       {selectedBin && (
         <div className="bg-white rounded-lg shadow-card p-6">

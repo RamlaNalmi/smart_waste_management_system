@@ -1,9 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { AlertTriangle, Database, Gauge, MapPin, TrendingUp, Clock, RefreshCw, Truck, AlertCircle, CheckCircle2, Calendar, Search, Download, Zap, ChevronRight, Volume2, Maximize2, Home, BarChart3, Map as MapIcon, Bell, Activity, Users, Navigation, Wind, Droplets, Trash2, Package } from 'lucide-react';
+import { AlertTriangle, Database, Gauge, MapPin, TrendingUp, Clock, RefreshCw, AlertCircle, CheckCircle2, Calendar, Search, Download, ChevronRight, Volume2, Maximize2, Home, BarChart3, Activity, Users, Navigation, Wind, Droplets, Trash2, Package, X } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LineChart, Line, AreaChart, Area } from 'recharts';
-import BinStatusTable from './BinStatusTable';
-import RecentAlerts from './RecentAlerts';
-import MiniMap from './MiniMap';
 import HealthStatus from './HealthStatus';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchBins, fetchAlerts, fetchLatestHealthData, fetchBinDetails, getBinLocationFromDetails } from '../services/api';
@@ -131,6 +128,8 @@ const Dashboard = () => {
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [fullScreenMode, setFullScreenMode] = useState(false);
   const [realTimeUpdates, setRealTimeUpdates] = useState([]);
+  const [detailsModal, setDetailsModal] = useState(null);
+  const [dismissedFallAlertKey, setDismissedFallAlertKey] = useState('');
 
   // Sound notification for critical alerts
   const playAlertSound = useCallback((criticalCount) => {
@@ -294,6 +293,50 @@ const Dashboard = () => {
     return result;
   }, [binsWithLocations, binDetails]);
 
+  const fallenBins = useMemo(
+    () => binsWithLocations.filter((bin) => bin.fall_detected),
+    [binsWithLocations]
+  );
+
+  const fallenAlertKey = useMemo(
+    () => fallenBins.map((bin) => bin.device_id).sort().join('|'),
+    [fallenBins]
+  );
+
+  const showFallenDashboardAlert = fallenBins.length > 0 && dismissedFallAlertKey !== fallenAlertKey;
+
+  const openDetailsModal = (type) => {
+    const modalConfig = {
+      total: {
+        title: 'Total Bins',
+        subtitle: 'All smart bins currently monitored',
+        bins: binsWithLocations
+      },
+      averageFill: {
+        title: 'Average Fill Rate',
+        subtitle: 'Fill level details for all monitored bins',
+        bins: [...binsWithLocations].sort((first, second) => second.fill_percentage - first.fill_percentage)
+      },
+      critical: {
+        title: 'Critical Bins',
+        subtitle: 'Bins that need urgent action',
+        bins: binsWithLocations.filter((bin) => bin.uiStatus === 'critical' || bin.fill_percentage >= 90)
+      },
+      gas: {
+        title: 'Gas Alerts',
+        subtitle: 'Bins with high odour or gas alerts',
+        bins: binsWithLocations.filter((bin) => bin.gas_alert)
+      },
+      fallen: {
+        title: 'Fallen Bins',
+        subtitle: 'Bins reporting fall detection',
+        bins: fallenBins
+      }
+    };
+
+    setDetailsModal(modalConfig[type]);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
       {/* Enhanced Header */}
@@ -319,7 +362,7 @@ const Dashboard = () => {
               </div>
             </div>
             
-            {/* Quick Actions */}
+            {/* Header Actions */}
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2 text-sm text-gray-500 bg-gray-50 px-3 py-2 rounded-lg">
                 <Clock className="w-4 h-4" />
@@ -364,6 +407,52 @@ const Dashboard = () => {
       {/* Main Content */}
       {!loading && !error && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+          {showFallenDashboardAlert && (
+            <div className="rounded-2xl border-2 border-red-200 bg-red-50 p-5 shadow-lg">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-xl bg-red-500 p-3 text-white shadow-lg">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-red-800">Fallen bin alert</h3>
+                    <p className="text-sm text-red-700 mt-1">
+                      {fallenBins.length} bin{fallenBins.length === 1 ? '' : 's'} reported fall detection and need inspection.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {fallenBins.slice(0, 4).map((bin) => (
+                        <span key={bin._id || bin.device_id} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-red-700 border border-red-200">
+                          {bin.device_id}
+                        </span>
+                      ))}
+                      {fallenBins.length > 4 && (
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-red-700 border border-red-200">
+                          +{fallenBins.length - 4} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setDismissedFallAlertKey(fallenAlertKey)}
+                    className="inline-flex items-center justify-center rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-50 transition-colors"
+                  >
+                    OK
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openDetailsModal('fallen')}
+                    className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-red-700 transition-colors"
+                  >
+                    View fallen bins
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Enhanced Key Metrics Overview */}
           <div className="space-y-6">
             {/* Section Header */}
@@ -392,6 +481,7 @@ const Dashboard = () => {
                 subtitle="Monitored"
                 description="All smart bins in system"
                 status="safe"
+                onClick={() => openDetailsModal('total')}
               />
               <KPICard 
                 title="Avg Fill Rate" 
@@ -402,6 +492,7 @@ const Dashboard = () => {
                 description="Average fill percentage"
                 status={metrics.averageFill >= 80 ? 'warning' : metrics.averageFill >= 60 ? 'safe' : 'safe'}
                 trend={metrics.averageFill >= 80 ? 'up' : 'stable'}
+                onClick={() => openDetailsModal('averageFill')}
               />
               <KPICard 
                 title="Critical Bins" 
@@ -410,6 +501,7 @@ const Dashboard = () => {
                 subtitle="Urgent Action"
                 description="Bins over 90% full"
                 status={metrics.critical > 0 ? 'critical' : 'safe'}
+                onClick={() => openDetailsModal('critical')}
               />
               <KPICard 
                 title="Gas Alerts" 
@@ -418,6 +510,7 @@ const Dashboard = () => {
                 subtitle="Odour Detected"
                 description="High odour levels"
                 status={metrics.gasAlerts > 0 ? 'critical' : 'safe'}
+                onClick={() => openDetailsModal('gas')}
               />
               <KPICard 
                 title="Fallen Bins" 
@@ -426,6 +519,7 @@ const Dashboard = () => {
                 subtitle="Fall Detected"
                 description="Bins that have fallen"
                 status={metrics.fallDetected > 0 ? 'critical' : 'safe'}
+                onClick={() => openDetailsModal('fallen')}
               />
             </div>
 
@@ -728,35 +822,6 @@ const Dashboard = () => {
               </div>
             </div>
 
-            {/* Enhanced Spatial View Map */}
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">Spatial View</h3>
-                  <p className="text-sm text-gray-500 mt-1">Real-time bin location monitoring</p>
-                </div>
-                <div className="flex items-center space-x-4 text-sm text-gray-500">
-                  <div className="flex items-center space-x-2">
-                    <MapPin className="w-4 h-4" />
-                    <span className="font-medium">{binsWithLocations.length} locations</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                    <span className="font-medium">{metrics.normal} safe</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                    <span className="font-medium">{metrics.warning} warning</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                    <span className="font-medium">{metrics.critical} critical</span>
-                  </div>
-                </div>
-              </div>
-              <MiniMap bins={binsWithLocations} height={500} />
-            </div>
-
             {/* Additional Analytics Row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Fill Level Distribution */}
@@ -1005,8 +1070,8 @@ const Dashboard = () => {
               </div>
             </div>
 
-          {/* Recent Activity & Quick Actions */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Activity */}
+          <div className="grid grid-cols-1 gap-6">
             {/* Recent Activity */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between mb-4">
@@ -1047,42 +1112,6 @@ const Dashboard = () => {
                   </div>
                 </div>
               </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Quick Actions</h3>
-                <Zap className="w-5 h-5 text-gray-400" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <button className="flex items-center justify-center space-x-2 p-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors">
-                  <MapIcon className="w-4 h-4" />
-                  <span className="text-sm font-medium">View Map</span>
-                </button>
-                <button className="flex items-center justify-center space-x-2 p-3 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors">
-                  <Truck className="w-4 h-4" />
-                  <span className="text-sm font-medium">Schedule</span>
-                </button>
-                <button className="flex items-center justify-center space-x-2 p-3 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition-colors">
-                  <BarChart3 className="w-4 h-4" />
-                  <span className="text-sm font-medium">Analytics</span>
-                </button>
-                <button className="flex items-center justify-center space-x-2 p-3 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors">
-                  <Bell className="w-4 h-4" />
-                  <span className="text-sm font-medium">All Alerts</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Detailed Tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-              <BinStatusTable limit={5} binDetails={binDetails} sensorData={bins} />
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-              <RecentAlerts limit={5} />
             </div>
           </div>
 
@@ -1161,6 +1190,108 @@ const Dashboard = () => {
                   <Bar dataKey="count" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {detailsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-5xl max-h-[85vh] overflow-hidden rounded-2xl bg-white shadow-2xl border border-gray-200">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">{detailsModal.title}</h3>
+                <p className="text-sm text-gray-600 mt-1">{detailsModal.subtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailsModal(null)}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+                aria-label="Close bin details"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-xl bg-white border border-gray-200 px-4 py-3">
+                  <p className="text-xs font-medium text-gray-500">Bins</p>
+                  <p className="text-2xl font-bold text-gray-900">{detailsModal.bins.length}</p>
+                </div>
+                <div className="rounded-xl bg-white border border-gray-200 px-4 py-3">
+                  <p className="text-xs font-medium text-gray-500">Avg Fill</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {detailsModal.bins.length
+                      ? Math.round(detailsModal.bins.reduce((sum, bin) => sum + bin.fill_percentage, 0) / detailsModal.bins.length)
+                      : 0}%
+                  </p>
+                </div>
+                <div className="rounded-xl bg-white border border-gray-200 px-4 py-3">
+                  <p className="text-xs font-medium text-gray-500">Gas Alerts</p>
+                  <p className="text-2xl font-bold text-red-600">{detailsModal.bins.filter((bin) => bin.gas_alert).length}</p>
+                </div>
+                <div className="rounded-xl bg-white border border-gray-200 px-4 py-3">
+                  <p className="text-xs font-medium text-gray-500">Fallen</p>
+                  <p className="text-2xl font-bold text-red-600">{detailsModal.bins.filter((bin) => bin.fall_detected).length}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-auto max-h-[52vh]">
+              {detailsModal.bins.length ? (
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white sticky top-0">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Device</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Location</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Fill</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Predicted</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Gas</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {detailsModal.bins.map((bin) => {
+                      const fillColor = bin.fill_percentage >= 90
+                        ? 'text-red-700 bg-red-50'
+                        : bin.fill_percentage >= 70
+                          ? 'text-yellow-700 bg-yellow-50'
+                          : 'text-green-700 bg-green-50';
+
+                      return (
+                        <tr key={bin._id || bin.device_id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 text-sm font-semibold text-gray-900">{bin.device_id}</td>
+                          <td className="px-6 py-4 text-sm text-gray-600">
+                            <div className="font-medium text-gray-800">{bin.location?.name || bin.location?.address || 'Unknown Location'}</div>
+                            <div className="text-xs text-gray-500">{bin.location?.district || bin.location?.area || 'Location not mapped'}</div>
+                          </td>
+                          <td className="px-6 py-4 text-sm">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${fillColor}`}>
+                              {bin.fill_percentage}%
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-700">
+                            {Number.isFinite(bin.predicted_next_fill) ? `${Math.round(bin.predicted_next_fill)}%` : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-700">
+                            {bin.gas ?? '-'} {bin.gas_alert && <span className="ml-2 text-xs font-bold text-red-600">Alert</span>}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-700">
+                            <div>{bin.fill_status || 'UNKNOWN'}</div>
+                            {bin.fall_detected && <div className="text-xs font-bold text-red-600">Fall detected</div>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="px-6 py-12 text-center">
+                  <p className="text-sm font-medium text-gray-700">No bins found for this card.</p>
+                  <p className="text-sm text-gray-500 mt-1">Live data will appear here when matching readings arrive.</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

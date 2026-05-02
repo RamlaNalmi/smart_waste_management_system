@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const { startMqttIngest } = require('./services/mqttIngest');
 
 // Load environment variables
 dotenv.config();
@@ -19,6 +20,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/smart-was
 })
 .then(() => console.log('MongoDB connected'))
 .then(() => console.log(`MongoDB database: ${mongoose.connection.db.databaseName}`))
+.then(() => startMqttIngest(mongoose.connection))
 .catch(err => console.error('MongoDB connection error:', err));
 
 // Routes

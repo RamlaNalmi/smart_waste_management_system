@@ -11,6 +11,8 @@ const binSchema = new mongoose.Schema({
     type: String,
     enum: ["LOW", "MEDIUM", "HIGH"]
   },
+  predicted_next_fill: Number,
+  predicted_fill_status: String,
 
   gas: Number,
   gas_alert: Boolean,

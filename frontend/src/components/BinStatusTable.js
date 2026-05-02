@@ -341,6 +341,7 @@ const BinStatusTable = ({ limit = null, data = null, binDetails = [], sensorData
                 ['location', 'Location', 'left'],
                 ['waste_type', 'Waste Type', 'left'],
                 ['fill_percentage', 'Fill Level', 'center'],
+                ['predicted_next_fill', 'Next Fill', 'center'],
                 ['fill_distance', 'Distance', 'center'],
                 ['gas', 'Gas', 'center'],
                 ['status', 'Status', 'center'],
@@ -433,6 +434,28 @@ const BinStatusTable = ({ limit = null, data = null, binDetails = [], sensorData
                         </div>
                       </div>
                       <div className="text-xs text-gray-500">{reading.fill_status}</div>
+                    </div>
+                  </td>
+
+                  {/* Predicted Next Fill */}
+                  <td className="py-4 px-4">
+                    <div className="text-center">
+                      {Number.isFinite(reading.predicted_next_fill) ? (
+                        <>
+                          <div className={`text-lg font-bold ${
+                            reading.predicted_next_fill >= 90 ? 'text-red-600' :
+                            reading.predicted_next_fill >= 70 ? 'text-yellow-600' :
+                            'text-green-600'
+                          }`}>
+                            {Math.round(reading.predicted_next_fill)}%
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {reading.predicted_fill_status || 'Predicted'}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-sm text-gray-400">-</span>
+                      )}
                     </div>
                   </td>
                   

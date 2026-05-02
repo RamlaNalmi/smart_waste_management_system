@@ -6,11 +6,33 @@ const getUiStatus = (reading) => {
   return 'normal';
 };
 
+const toBoolean = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'y', 'alert', 'fallen', 'detected'].includes(normalized);
+  }
+  return Boolean(value);
+};
+
 export const normalizeBin = (reading) => {
   const fillPercentage = Number(reading.fill_percentage) || 0;
   const gas = reading.gas === undefined || reading.gas === null ? null : Number(reading.gas);
   const binWeight = reading.bin_weight === undefined || reading.bin_weight === null ? null : Number(reading.bin_weight);
   const fillDistance = reading.fill_distance === undefined || reading.fill_distance === null ? null : Number(reading.fill_distance);
+  const gasAlert = toBoolean(reading.gas_alert);
+  const fallDetected = toBoolean(
+    reading.fall_detected ??
+    reading.fallen ??
+    reading.fall_alert ??
+    reading.fallAlert ??
+    reading.tilt_alert ??
+    reading.tiltAlert
+  );
+  const predictedNextFill = reading.predicted_next_fill === undefined || reading.predicted_next_fill === null
+    ? null
+    : Number(reading.predicted_next_fill);
 
   return {
     ...reading,
@@ -25,19 +47,21 @@ export const normalizeBin = (reading) => {
     bin_weight: Number.isFinite(binWeight) ? binWeight : null,
     fill_percentage: fillPercentage,
     fill_status: reading.fill_status || 'UNKNOWN',
+    predicted_next_fill: Number.isFinite(predictedNextFill) ? predictedNextFill : null,
+    predicted_fill_status: reading.predicted_fill_status || null,
     gas,
-    gas_alert: Boolean(reading.gas_alert),
+    gas_alert: gasAlert,
     angleX: reading.angleX === undefined || reading.angleX === null ? null : Number(reading.angleX),
     angleY: reading.angleY === undefined || reading.angleY === null ? null : Number(reading.angleY),
-    fall_detected: Boolean(reading.fall_detected),
+    fall_detected: fallDetected,
     timestamp: reading.timestamp || '',
     topic: reading.topic || '',
     received_at: reading.received_at || null,
     uiStatus: getUiStatus({
       ...reading,
       fill_percentage: fillPercentage,
-      gas_alert: Boolean(reading.gas_alert),
-      fall_detected: Boolean(reading.fall_detected)
+      gas_alert: gasAlert,
+      fall_detected: fallDetected
     })
   };
 };
